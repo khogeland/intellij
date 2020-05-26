@@ -96,11 +96,11 @@ public class TargetExpression
     if (localPackage.isWorkspaceRoot()) {
       return new TargetExpression("//...:all");
     }
-    return new TargetExpression("//" + localPackage.relativePath() + "/...:all");
+    return new TargetExpression("//" + localPackage.relativePath().replace("\\", "/") + "/...:all");
   }
 
   public static TargetExpression allFromPackageNonRecursive(WorkspacePath localPackage) {
-    return new TargetExpression("//" + localPackage.relativePath() + ":all");
+    return new TargetExpression("//" + localPackage.relativePath().replace("\\", "/") + ":all");
   }
 
   @Override

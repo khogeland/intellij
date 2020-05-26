@@ -50,7 +50,7 @@ public class PartialSyncAction extends BlazeProjectSyncAction {
     final ImmutableSet<TargetExpression> targets;
 
     PartialSyncData(String description, ImmutableSet<TargetExpression> targets) {
-      this.description = description;
+      this.description = description.replace("\\", "/");
       this.targets = targets;
     }
 
