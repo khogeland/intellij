@@ -29,7 +29,7 @@ import java.util.Set;
  * A simple target batcher splitting based on the target strings. This will tend to split by
  * package, so is better than random batching.
  */
-class LexicographicTargetSharder implements BuildBatchingService {
+public class LexicographicTargetSharder implements BuildBatchingService {
   @Override
   public ImmutableList<ImmutableList<Label>> calculateTargetBatches(
       Set<Label> targets, BuildBinaryType buildType, int suggestedShardSize) {

@@ -274,6 +274,7 @@ java_library(
     srcs = [
         "src/com/google/idea/blaze/base/settings/BuildBinaryType.java",
         "src/com/google/idea/blaze/base/sync/sharding/BuildBatchingService.java",
+        "src/com/google/idea/blaze/base/sync/sharding/LexicographicTargetSharder.java",
     ],
     neverlink = 1,
     exports = [
