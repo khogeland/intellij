@@ -96,7 +96,9 @@ public final class SyncProjectTargetsHelper {
       WorkspaceLanguageSettings languageSettings)
       throws SyncFailedException, SyncCanceledException {
     String fileBugSuggestion =
-        Blaze.getBuildSystem(project) == BuildSystem.Bazel ? "" : " Please run 'Help > File a Bug'";
+        Blaze.getBuildSystem(project) == BuildSystem.Bazel
+            ? ""
+            : " Please run 'Blaze > File a Bug'";
     if (!DirectoryToTargetProvider.hasProvider()) {
       IssueOutput.error(
               "Can't derive targets from project directories: no query provider available."
@@ -133,7 +135,8 @@ public final class SyncProjectTargetsHelper {
             .filter(
                 t ->
                     t.getKind() != null
-                        && languageSettings.isLanguageActive(t.getKind().getLanguageClass()))
+                        && t.getKind().getLanguageClasses().stream()
+                            .anyMatch(languageSettings::isLanguageActive))
             .map(t -> t.label)
             .collect(toImmutableList());
     context.output(

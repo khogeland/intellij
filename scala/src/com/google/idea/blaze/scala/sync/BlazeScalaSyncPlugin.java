@@ -37,15 +37,15 @@ import com.google.idea.blaze.base.sync.workspace.WorkingSet;
 import com.google.idea.blaze.scala.sync.importer.BlazeScalaWorkspaceImporter;
 import com.google.idea.blaze.scala.sync.model.BlazeScalaImportResult;
 import com.google.idea.blaze.scala.sync.model.BlazeScalaSyncData;
-import com.google.idea.sdkcompat.scala.ScalaLibraryTypeCompat;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.ModifiableRootModel;
-import com.intellij.openapi.roots.impl.libraries.ProjectLibraryTable;
 import com.intellij.openapi.roots.libraries.Library;
+import com.intellij.openapi.roots.libraries.LibraryTablesRegistrar;
 import com.intellij.openapi.roots.ui.configuration.libraryEditor.ExistingLibraryEditor;
 import java.util.Set;
 import javax.annotation.Nullable;
+import org.jetbrains.plugins.scala.project.ScalaLibraryType;
 
 /** Supports scala. */
 public class BlazeScalaSyncPlugin implements BlazeSyncPlugin {
@@ -71,13 +71,14 @@ public class BlazeScalaSyncPlugin implements BlazeSyncPlugin {
     if (!blazeProjectData.getWorkspaceLanguageSettings().isLanguageActive(LanguageClass.SCALA)) {
       return;
     }
-    for (Library library : ProjectLibraryTable.getInstance(project).getLibraries()) {
+    for (Library library :
+        LibraryTablesRegistrar.getInstance().getLibraryTable(project).getLibraries()) {
       // Convert the type of the SDK library to prevent the scala plugin from
       // showing the missing SDK notification.
       // TODO: use a canonical class in the SDK (e.g., scala.App) instead of the name?
       if (library.getName() != null && library.getName().startsWith("scala-library")) {
         ExistingLibraryEditor editor = new ExistingLibraryEditor(library, null);
-        editor.setType(ScalaLibraryTypeCompat.getScalaLibraryType());
+        editor.setType(ScalaLibraryType.apply());
         editor.commit();
         return;
       }

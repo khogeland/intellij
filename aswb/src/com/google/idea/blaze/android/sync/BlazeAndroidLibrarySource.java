@@ -15,6 +15,8 @@
  */
 package com.google.idea.blaze.android.sync;
 
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
+
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.idea.blaze.android.sync.model.AarLibrary;
@@ -24,6 +26,7 @@ import com.google.idea.blaze.base.model.BlazeLibrary;
 import com.google.idea.blaze.base.model.BlazeProjectData;
 import com.google.idea.blaze.base.sync.libraries.LibrarySource;
 import com.google.idea.blaze.java.sync.model.BlazeJarLibrary;
+import com.google.idea.common.experiments.BoolExperiment;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -33,6 +36,10 @@ import javax.annotation.Nullable;
 
 /** {@link LibrarySource} for android. */
 public class BlazeAndroidLibrarySource extends LibrarySource.Adapter {
+
+  private static final BoolExperiment filterResourceJarsEnabled =
+      new BoolExperiment("aswb.filter.resource.jars", true);
+
   private final BlazeProjectData blazeProjectData;
 
   BlazeAndroidLibrarySource(BlazeProjectData blazeProjectData) {
@@ -46,9 +53,6 @@ public class BlazeAndroidLibrarySource extends LibrarySource.Adapter {
       return ImmutableList.of();
     }
     ImmutableList.Builder<BlazeLibrary> libraries = ImmutableList.builder();
-    if (syncData.importResult.resourceLibraries != null) {
-      libraries.addAll(syncData.importResult.resourceLibraries.values());
-    }
     for (BlazeJarLibrary javacJarLibrary : syncData.importResult.javacJarLibraries) {
       libraries.add(javacJarLibrary);
     }
@@ -60,10 +64,22 @@ public class BlazeAndroidLibrarySource extends LibrarySource.Adapter {
   @Override
   public Predicate<BlazeLibrary> getLibraryFilter() {
     BlazeAndroidSyncData syncData = blazeProjectData.getSyncState().get(BlazeAndroidSyncData.class);
-    if (syncData == null || syncData.importResult.aarLibraries.isEmpty()) {
+    if (syncData == null) {
       return null;
     }
-    return new AarJarFilter(syncData.importResult.aarLibraries.values());
+
+    Predicate<BlazeLibrary> finalPredicate = null;
+
+    if (!syncData.importResult.aarLibraries.isEmpty()) {
+      finalPredicate = new AarJarFilter(syncData.importResult.aarLibraries.values());
+    }
+    if (filterResourceJarsEnabled.getValue() && !syncData.importResult.resourceJars.isEmpty()) {
+      Predicate<BlazeLibrary> resJarFilter =
+          new ResourceJarFilter(syncData.importResult.resourceJars);
+      finalPredicate = finalPredicate == null ? resJarFilter : finalPredicate.and(resJarFilter);
+    }
+
+    return finalPredicate;
   }
 
   /**
@@ -78,15 +94,20 @@ public class BlazeAndroidLibrarySource extends LibrarySource.Adapter {
     public AarJarFilter(Collection<AarLibrary> aarLibraries) {
       Set<String> aarJarsPaths = new HashSet<>();
       for (AarLibrary aarLibrary : aarLibraries) {
-        ArtifactLocation location = aarLibrary.libraryArtifact.jarForIntellijLibrary();
-        // Keep track of the paths module the "configuration". It might be that we have a host
-        // config (x86-64) and various target configurations (armv7a, aarch64).
-        // In the TargetMap we pick one of the configuration targets. We then use the TargetMap
-        // to figure out aar libraries. However, what we picked might not match up with jdeps, and
-        // we'd end up creating a jar library from jdeps. Then when we compare the aar
-        // against the jar library, it won't match unless we ignore the configuration segment.
-        String configurationLessPath = location.getRelativePath();
-        aarJarsPaths.add(configurationLessPath);
+        if (aarLibrary.libraryArtifact != null) {
+          ArtifactLocation location = aarLibrary.libraryArtifact.jarForIntellijLibrary();
+          // Keep track of the relative paths of the "configuration". It might be that we have a
+          // host
+          // config (x86-64) and various target configurations (armv7a, aarch64).
+          // In the TargetMap we pick one of the configuration targets. We then use the TargetMap
+          // to figure out aar libraries. However, what we picked might not match up with jdeps, and
+          // we'd end up creating a jar library from jdeps. Then when we compare the aar
+          // against the jar library, it won't match unless we ignore the configuration segment.
+          String configurationLessPath = location.getRelativePath();
+          if (!configurationLessPath.isEmpty()) {
+            aarJarsPaths.add(configurationLessPath);
+          }
+        }
       }
       this.aarJarsPaths = aarJarsPaths;
     }
@@ -100,6 +121,31 @@ public class BlazeAndroidLibrarySource extends LibrarySource.Adapter {
       ArtifactLocation location = jarLibrary.libraryArtifact.jarForIntellijLibrary();
       String configurationLessPath = location.getRelativePath();
       return !aarJarsPaths.contains(configurationLessPath);
+    }
+  }
+
+  /** Filters out any resource JARs exported by android targets. */
+  @VisibleForTesting
+  public static class ResourceJarFilter implements Predicate<BlazeLibrary> {
+    private final Set<String> resourceJarPaths;
+
+    public ResourceJarFilter(Collection<BlazeJarLibrary> resourceJars) {
+      this.resourceJarPaths =
+          resourceJars.stream()
+              .map(e -> e.libraryArtifact.jarForIntellijLibrary().getRelativePath())
+              .collect(toImmutableSet());
+    }
+
+    @Override
+    public boolean test(BlazeLibrary blazeLibrary) {
+      if (!(blazeLibrary instanceof BlazeJarLibrary)) {
+        return true;
+      }
+      return !resourceJarPaths.contains(
+          ((BlazeJarLibrary) blazeLibrary)
+              .libraryArtifact
+              .jarForIntellijLibrary()
+              .getRelativePath());
     }
   }
 }

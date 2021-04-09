@@ -32,7 +32,6 @@ import com.intellij.execution.configurations.RunProfile;
 import com.intellij.execution.configurations.RunProfileState;
 import com.intellij.execution.configurations.RunnerSettings;
 import com.intellij.execution.configurations.RuntimeConfigurationException;
-import com.intellij.execution.runners.BaseProgramRunner;
 import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.execution.runners.ExecutionUtil;
 import com.intellij.execution.runners.ProgramRunner;
@@ -83,7 +82,7 @@ class PendingTargetRunConfigurationHandler implements BlazeCommandRunConfigurati
     return "Pending target handler";
   }
 
-  static class PendingTargetProgramRunner extends BaseProgramRunner<RunnerSettings> {
+  static class PendingTargetProgramRunner implements ProgramRunner<RunnerSettings> {
     @Override
     public String getRunnerId() {
       return "PendingTargetProgramRunner";
@@ -104,10 +103,8 @@ class PendingTargetRunConfigurationHandler implements BlazeCommandRunConfigurati
     }
 
     @Override
-    protected void execute(
-        ExecutionEnvironment env, @Nullable Callback callback, RunProfileState state)
-        throws ExecutionException {
-      if (!(state instanceof DummyRunProfileState)) {
+    public void execute(ExecutionEnvironment env) throws ExecutionException {
+      if (!(env.getState() instanceof DummyRunProfileState)) {
         reRunConfiguration(env);
         return;
       }
@@ -142,7 +139,7 @@ class PendingTargetRunConfigurationHandler implements BlazeCommandRunConfigurati
    */
   private static class DummyRunProfileState implements RunProfileState {
     @Override
-    public ExecutionResult execute(Executor executor, ProgramRunner runner) {
+    public ExecutionResult execute(Executor executor, ProgramRunner<?> runner) {
       throw new RuntimeException("Unexpected code path");
     }
   }

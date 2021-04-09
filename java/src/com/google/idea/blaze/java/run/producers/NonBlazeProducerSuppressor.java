@@ -36,7 +36,6 @@ public class NonBlazeProducerSuppressor implements ProjectComponent {
   private static final String KOTLIN_PLUGIN_ID = "org.jetbrains.kotlin";
   private static final String ANDROID_PLUGIN_ID = "org.jetbrains.android";
   private static final String GRADLE_PLUGIN_ID = "org.jetbrains.plugins.gradle";
-  private static final String JUNIT_PLUGIN_ID = "JUnit";
 
   private static final ImmutableList<String> KOTLIN_PRODUCERS =
       ImmutableList.of(
@@ -66,25 +65,17 @@ public class NonBlazeProducerSuppressor implements ProjectComponent {
           "org.jetbrains.plugins.gradle.execution.test.runner.TestMethodGradleConfigurationProducer",
           "org.jetbrains.plugins.gradle.service.execution.GradleRuntimeConfigurationProducer");
 
-  /**
-   * JUnit producers which are optionally present (may require specific SDK versions).
-   *
-   * <p>#api183: update; move common ones to JAVA_PRODUCERS
-   */
-  private static final ImmutableList<String> OPTIONAL_JUNIT_PRODUCERS =
-      ImmutableList.of(
-          "com.intellij.execution.junit.AbstractAllInDirectoryConfigurationProducer",
-          "com.intellij.execution.junit.UniqueIdConfigurationProducer",
-          "com.intellij.execution.junit.testDiscovery.JUnitTestDiscoveryConfigurationProducer");
-
   private static final ImmutableList<Class<? extends RunConfigurationProducer<?>>> JAVA_PRODUCERS =
       ImmutableList.of(
+          com.intellij.execution.junit.AbstractAllInDirectoryConfigurationProducer.class,
           com.intellij.execution.junit.AllInDirectoryConfigurationProducer.class,
           com.intellij.execution.junit.AllInPackageConfigurationProducer.class,
           com.intellij.execution.junit.TestInClassConfigurationProducer.class,
           com.intellij.execution.junit.TestClassConfigurationProducer.class,
           com.intellij.execution.junit.TestMethodConfigurationProducer.class,
           com.intellij.execution.junit.PatternConfigurationProducer.class,
+          com.intellij.execution.junit.UniqueIdConfigurationProducer.class,
+          com.intellij.execution.junit.testDiscovery.JUnitTestDiscoveryConfigurationProducer.class,
           com.intellij.execution.application.ApplicationConfigurationProducer.class);
 
   private static Collection<Class<? extends RunConfigurationProducer<?>>> getProducers(
@@ -96,20 +87,20 @@ public class NonBlazeProducerSuppressor implements ProjectComponent {
       return ImmutableList.of();
     }
     ClassLoader loader = plugin.getPluginClassLoader();
-    return qualifiedClassNames
-        .stream()
+    return qualifiedClassNames.stream()
         .map((qualifiedName) -> loadClass(loader, qualifiedName))
         .filter(Objects::nonNull)
         .collect(Collectors.toList());
   }
 
+  @SuppressWarnings("unchecked") // Instanceof check is right before cast.
   @Nullable
-  private static Class<RunConfigurationProducer<?>> loadClass(
+  private static Class<? extends RunConfigurationProducer<?>> loadClass(
       ClassLoader loader, String qualifiedName) {
     try {
       Class<?> clazz = loader.loadClass(qualifiedName);
       if (RunConfigurationProducer.class.isAssignableFrom(clazz)) {
-        return (Class<RunConfigurationProducer<?>>) clazz;
+        return (Class<? extends RunConfigurationProducer<?>>) clazz;
       }
       return null;
     } catch (PluginException | ClassNotFoundException | NoClassDefFoundError ignored) {
@@ -138,7 +129,6 @@ public class NonBlazeProducerSuppressor implements ProjectComponent {
         .addAll(getProducers(KOTLIN_PLUGIN_ID, KOTLIN_PRODUCERS))
         .addAll(getProducers(ANDROID_PLUGIN_ID, ANDROID_PRODUCERS))
         .addAll(getProducers(GRADLE_PLUGIN_ID, GRADLE_PRODUCERS))
-        .addAll(getProducers(JUNIT_PLUGIN_ID, OPTIONAL_JUNIT_PRODUCERS))
         .build()
         .forEach(producerService::addIgnoredProducer);
   }

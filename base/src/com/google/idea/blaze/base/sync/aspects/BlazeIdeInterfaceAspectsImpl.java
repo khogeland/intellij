@@ -36,15 +36,14 @@ import com.google.idea.blaze.base.async.process.ExternalTask;
 import com.google.idea.blaze.base.async.process.LineProcessingOutputStream;
 import com.google.idea.blaze.base.command.BlazeCommand;
 import com.google.idea.blaze.base.command.BlazeCommandName;
+import com.google.idea.blaze.base.command.BlazeCommandRunner;
 import com.google.idea.blaze.base.command.BlazeFlags;
 import com.google.idea.blaze.base.command.BlazeInvocationContext;
 import com.google.idea.blaze.base.command.buildresult.BlazeArtifact;
 import com.google.idea.blaze.base.command.buildresult.BlazeArtifact.LocalFileArtifact;
 import com.google.idea.blaze.base.command.buildresult.BuildResultHelper;
-import com.google.idea.blaze.base.command.buildresult.BuildResultHelper.GetArtifactsException;
 import com.google.idea.blaze.base.command.buildresult.BuildResultHelperProvider;
 import com.google.idea.blaze.base.command.buildresult.OutputArtifact;
-import com.google.idea.blaze.base.command.buildresult.RemoteOutputArtifact;
 import com.google.idea.blaze.base.command.info.BlazeConfigurationHandler;
 import com.google.idea.blaze.base.command.info.BlazeInfo;
 import com.google.idea.blaze.base.console.BlazeConsoleLineProcessorProvider;
@@ -62,9 +61,9 @@ import com.google.idea.blaze.base.model.primitives.Kind;
 import com.google.idea.blaze.base.model.primitives.LanguageClass;
 import com.google.idea.blaze.base.model.primitives.TargetExpression;
 import com.google.idea.blaze.base.model.primitives.WorkspaceRoot;
-import com.google.idea.blaze.base.prefetch.FetchExecutor;
 import com.google.idea.blaze.base.prefetch.PrefetchFileSource;
 import com.google.idea.blaze.base.prefetch.PrefetchService;
+import com.google.idea.blaze.base.prefetch.RemoteArtifactPrefetcher;
 import com.google.idea.blaze.base.projectview.ProjectViewSet;
 import com.google.idea.blaze.base.projectview.section.sections.AutomaticallyDeriveTargetsSection;
 import com.google.idea.blaze.base.scope.BlazeContext;
@@ -86,6 +85,7 @@ import com.google.idea.blaze.base.sync.projectview.ImportRoots;
 import com.google.idea.blaze.base.sync.projectview.LanguageSupport;
 import com.google.idea.blaze.base.sync.projectview.WorkspaceLanguageSettings;
 import com.google.idea.blaze.base.sync.sharding.ShardedTargetList;
+import com.google.idea.common.experiments.BoolExperiment;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.project.Project;
@@ -113,6 +113,8 @@ import javax.annotation.Nullable;
 public class BlazeIdeInterfaceAspectsImpl implements BlazeIdeInterface {
 
   private static final Logger logger = Logger.getInstance(BlazeIdeInterfaceAspectsImpl.class);
+  private static final BoolExperiment disableValidationActionExperiment =
+      new BoolExperiment("blaze.sync.disable.valication.action", true);
 
   @Override
   public BlazeBuildOutputs buildIdeArtifacts(
@@ -231,26 +233,32 @@ public class BlazeIdeInterfaceAspectsImpl implements BlazeIdeInterface {
                 "Total rules: %d, new/changed: %d, removed: %d",
                 targetCount, diff.getUpdatedOutputs().size(), removedCount)));
 
-    // prefetch remote outputs
-    List<ListenableFuture<?>> futures = new ArrayList<>();
-    for (BlazeArtifact file : diff.getUpdatedOutputs()) {
-      if (file instanceof RemoteOutputArtifact) {
-        futures.add(FetchExecutor.EXECUTOR.submit(((RemoteOutputArtifact) file)::prefetch));
-      }
-    }
-    if (!futures.isEmpty()
-        && !FutureUtil.waitForFuture(context, Futures.allAsList(futures))
-            .timed("PrefetchRemoteAspectOutput", EventType.Prefetching)
-            .withProgressMessage("Reading IDE info result...")
-            .run()
-            .success()) {
+    ListenableFuture<?> downloadArtifactsFuture =
+        RemoteArtifactPrefetcher.getInstance()
+            .downloadArtifacts(
+                /* projectName= */ project.getName(),
+                /* outputArtifacts= */ BlazeArtifact.getRemoteArtifacts(diff.getUpdatedOutputs()));
+    ListenableFuture<?> loadFilesInJvmFuture =
+        RemoteArtifactPrefetcher.getInstance()
+            .loadFilesInJvm(
+                /* outputArtifacts= */ BlazeArtifact.getRemoteArtifacts(diff.getUpdatedOutputs()));
+
+    if (!FutureUtil.waitForFuture(
+            context, Futures.allAsList(downloadArtifactsFuture, loadFilesInJvmFuture))
+        .timed("PrefetchRemoteAspectOutput", EventType.Prefetching)
+        .withProgressMessage("Reading IDE info result...")
+        .run()
+        .success()) {
       return null;
     }
 
-    ListenableFuture<?> prefetchFuture =
+    ListenableFuture<?> fetchLocalFilesFuture =
         PrefetchService.getInstance()
-            .prefetchFiles(BlazeArtifact.getLocalFiles(diff.getUpdatedOutputs()), true, false);
-    if (!FutureUtil.waitForFuture(context, prefetchFuture)
+            .prefetchFiles(
+                /* files= */ BlazeArtifact.getLocalFiles(diff.getUpdatedOutputs()),
+                /* refetchCachedFiles= */ true,
+                /* fetchFileTypes= */ false);
+    if (!FutureUtil.waitForFuture(context, fetchLocalFilesFuture)
         .timed("FetchAspectOutput", EventType.Prefetching)
         .withProgressMessage("Reading IDE info result...")
         .run()
@@ -315,6 +323,7 @@ public class BlazeIdeInterfaceAspectsImpl implements BlazeIdeInterface {
                 "Building targets for shard %s of %s...", count, shardedTargets.shardCount());
     Function<List<TargetExpression>, BuildResult> invocation =
         targets -> {
+
           BlazeBuildOutputs result =
               runBuildForTargets(
                   project,
@@ -362,16 +371,17 @@ public class BlazeIdeInterfaceAspectsImpl implements BlazeIdeInterface {
         BuildResultHelperProvider.createForSync(project, blazeInfo)) {
 
       BlazeCommand.Builder builder =
-          BlazeCommand.builder(buildParams.blazeBinaryPath(), BlazeCommandName.BUILD)
-              .addTargets(targets)
-              .addBlazeFlags(BlazeFlags.KEEP_GOING)
-              .addBlazeFlags(buildResultHelper.getBuildFlags())
-              .addBlazeFlags(
-                  BlazeFlags.blazeFlags(
-                      project,
-                      viewSet,
-                      BlazeCommandName.BUILD,
-                      BlazeInvocationContext.SYNC_CONTEXT));
+          BlazeCommand.builder(buildParams.blazeBinaryPath(), BlazeCommandName.BUILD);
+      builder
+          .addTargets(targets)
+          .addBlazeFlags(BlazeFlags.KEEP_GOING)
+          .addBlazeFlags(buildResultHelper.getBuildFlags())
+          .addBlazeFlags(
+              BlazeFlags.blazeFlags(
+                  project, viewSet, BlazeCommandName.BUILD, BlazeInvocationContext.SYNC_CONTEXT));
+      if (disableValidationActionExperiment.getValue()) {
+        builder.addBlazeFlags(BlazeFlags.DISABLE_VALIDATIONS);
+      }
 
       aspectStrategy.addAspectAndOutputGroups(
           builder,
@@ -379,27 +389,14 @@ public class BlazeIdeInterfaceAspectsImpl implements BlazeIdeInterface {
           activeLanguages,
           onlyDirectDeps);
 
-      int retVal =
-          ExternalTask.builder(workspaceRoot)
-              .addBlazeCommand(builder.build())
-              .context(context)
-              .stderr(
-                  LineProcessingOutputStream.of(
-                      BlazeConsoleLineProcessorProvider.getAllStderrLineProcessors(context)))
-              .build()
-              .run();
-
-      BuildResult buildResult = BuildResult.fromExitCode(retVal);
-      if (buildResult.status == Status.FATAL_ERROR) {
-        return BlazeBuildOutputs.noOutputs(buildResult);
+      for (BlazeCommandRunner runner : BlazeCommandRunner.EP_NAME.getExtensions()) {
+        if (runner.isAvailable(project)) {
+          return runner.run(
+              project, builder, buildParams, buildResultHelper, workspaceRoot, context);
+        }
       }
-      try {
-        return BlazeBuildOutputs.fromParsedBepOutput(
-            buildResult, buildResultHelper.getBuildOutput());
-      } catch (GetArtifactsException e) {
-        IssueOutput.error("Failed to get build outputs: " + e.getMessage()).submit(context);
-        return BlazeBuildOutputs.noOutputs(buildResult);
-      }
+      IssueOutput.error("Failed to create build: no blaze command runner found");
+      return BlazeBuildOutputs.noOutputs(BuildResult.FATAL_ERROR);
     }
   }
 
@@ -591,11 +588,11 @@ public class BlazeIdeInterfaceAspectsImpl implements BlazeIdeInterface {
       TargetIdeInfo target,
       Set<LanguageClass> ignoredLanguages) {
     Kind kind = target.getKind();
-    if (languageSettings.isLanguageActive(kind.getLanguageClass())) {
+    if (kind.getLanguageClasses().stream().anyMatch(languageSettings::isLanguageActive)) {
       return false;
     }
     if (importRoots.importAsSource(target.getKey().getLabel())) {
-      ignoredLanguages.add(kind.getLanguageClass());
+      ignoredLanguages.addAll(kind.getLanguageClasses());
     }
     return true;
   }
@@ -611,12 +608,12 @@ public class BlazeIdeInterfaceAspectsImpl implements BlazeIdeInterface {
     if (kind == null) {
       return null;
     }
-    if (languageSettings.isLanguageActive(kind.getLanguageClass())) {
+    if (kind.getLanguageClasses().stream().anyMatch(languageSettings::isLanguageActive)) {
       return TargetIdeInfo.fromProto(message, syncTime);
     }
     TargetKey key = message.hasKey() ? TargetKey.fromProto(message.getKey()) : null;
     if (key != null && importRoots.importAsSource(key.getLabel())) {
-      ignoredLanguages.add(kind.getLanguageClass());
+      ignoredLanguages.addAll(kind.getLanguageClasses());
     }
     return null;
   }

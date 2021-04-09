@@ -16,20 +16,24 @@
 package com.google.idea.blaze.android.run.test;
 
 import com.android.ddmlib.IDevice;
-import com.android.tools.idea.run.ApkInfo;
 import com.android.tools.idea.run.ApkProvider;
 import com.android.tools.idea.run.ApkProvisionException;
 import com.android.tools.idea.run.ApplicationIdProvider;
 import com.android.tools.idea.run.ConsolePrinter;
 import com.android.tools.idea.run.ConsoleProvider;
 import com.android.tools.idea.run.LaunchOptions;
+import com.android.tools.idea.run.editor.AndroidDebugger;
+import com.android.tools.idea.run.editor.AndroidDebuggerState;
 import com.android.tools.idea.run.tasks.LaunchTask;
+import com.android.tools.idea.run.tasks.LaunchTasksProvider;
+import com.android.tools.idea.run.util.LaunchStatus;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
-import com.google.idea.blaze.android.run.DeployTaskCompat;
 import com.google.idea.blaze.android.run.binary.mobileinstall.BlazeApkBuildStepMobileInstall;
-import com.google.idea.blaze.android.run.deployinfo.BlazeApkProvider;
+import com.google.idea.blaze.android.run.deployinfo.BlazeAndroidDeployInfo;
+import com.google.idea.blaze.android.run.deployinfo.BlazeApkProviderService;
 import com.google.idea.blaze.android.run.runner.BlazeAndroidDeviceSelector;
+import com.google.idea.blaze.android.run.runner.BlazeAndroidLaunchTasksProvider;
 import com.google.idea.blaze.android.run.runner.BlazeAndroidRunContext;
 import com.google.idea.blaze.android.run.runner.BlazeApkBuildStep;
 import com.google.idea.blaze.android.run.runner.BlazeApkBuildStepNormalBuild;
@@ -45,7 +49,6 @@ import com.intellij.execution.Executor;
 import com.intellij.execution.executors.DefaultDebugExecutor;
 import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.openapi.project.Project;
-import java.util.Collection;
 import java.util.List;
 import javax.annotation.Nullable;
 import org.jetbrains.android.facet.AndroidFacet;
@@ -92,11 +95,12 @@ abstract class BlazeAndroidTestRunContextBase implements BlazeAndroidRunContext 
     }
 
     this.applicationIdProvider = new BlazeAndroidTestApplicationIdProvider(buildStep);
-    this.apkProvider = new BlazeApkProvider(project, buildStep);
+    this.apkProvider = BlazeApkProviderService.getInstance().getApkProvider(project, buildStep);
 
     BlazeTestUiSession testUiSession =
         canUseTestUi(env.getExecutor())
-            ? TestUiSessionProvider.getInstance(env.getProject()).getTestUiSession(label)
+            ? TestUiSessionProvider.getInstance(env.getProject())
+                .getTestUiSession(ImmutableList.of(label))
             : null;
     if (testUiSession != null) {
       this.blazeFlags =
@@ -146,21 +150,46 @@ abstract class BlazeAndroidTestRunContextBase implements BlazeAndroidRunContext 
   }
 
   @Override
-  public ImmutableList<LaunchTask> getDeployTasks(IDevice device, LaunchOptions launchOptions)
+  public LaunchTasksProvider getLaunchTasksProvider(LaunchOptions.Builder launchOptionsBuilder)
+      throws ExecutionException {
+    return new BlazeAndroidLaunchTasksProvider(
+        project, this, applicationIdProvider, launchOptionsBuilder);
+  }
+
+  @SuppressWarnings({"rawtypes"}) // Raw type from upstream.
+  @Nullable
+  @Override
+  public LaunchTask getApplicationLaunchTask(
+      LaunchOptions launchOptions,
+      @Nullable Integer userId,
+      String contributorsAmStartOptions,
+      AndroidDebugger androidDebugger,
+      AndroidDebuggerState androidDebuggerState,
+      LaunchStatus launchStatus)
       throws ExecutionException {
     switch (configState.getLaunchMethod()) {
-      case NON_BLAZE:
-        // fall through
       case BLAZE_TEST:
-        Collection<ApkInfo> apks;
+        return new BlazeAndroidTestLaunchTask(
+            project,
+            label,
+            blazeFlags,
+            new BlazeAndroidTestFilter(
+                configState.getTestingType(),
+                configState.getClassName(),
+                configState.getMethodName(),
+                configState.getPackageName()),
+            this,
+            launchOptions.isDebug());
+      case NON_BLAZE:
+      case MOBILE_INSTALL:
+        BlazeAndroidDeployInfo deployInfo;
         try {
-          apks = apkProvider.getApks(device);
+          deployInfo = buildStep.getDeployInfo();
         } catch (ApkProvisionException e) {
           throw new ExecutionException(e);
         }
-        return ImmutableList.of(DeployTaskCompat.createDeployTask(project, launchOptions, apks));
-      case MOBILE_INSTALL:
-        return ImmutableList.of();
+        return StockAndroidTestLaunchTaskBase.getStockTestLaunchTask(
+            configState, applicationIdProvider, launchOptions.isDebug(), deployInfo, launchStatus);
     }
     throw new AssertionError();
   }
@@ -179,5 +208,10 @@ abstract class BlazeAndroidTestRunContextBase implements BlazeAndroidRunContext 
   @Override
   public Integer getUserId(IDevice device, ConsolePrinter consolePrinter) {
     return null;
+  }
+
+  @Override
+  public String getAmStartOptions() {
+    return "";
   }
 }

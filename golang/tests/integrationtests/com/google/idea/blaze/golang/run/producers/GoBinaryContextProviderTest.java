@@ -25,8 +25,8 @@ import com.google.idea.blaze.base.model.MockBlazeProjectDataManager;
 import com.google.idea.blaze.base.model.primitives.TargetExpression;
 import com.google.idea.blaze.base.model.primitives.WorkspacePath;
 import com.google.idea.blaze.base.run.BlazeCommandRunConfiguration;
-import com.google.idea.blaze.base.run.producer.BlazeRunConfigurationProducerTestCase;
 import com.google.idea.blaze.base.run.producers.BinaryContextRunConfigurationProducer;
+import com.google.idea.blaze.base.run.producers.BlazeRunConfigurationProducerTestCase;
 import com.google.idea.blaze.base.sync.data.BlazeProjectDataManager;
 import com.intellij.execution.actions.ConfigurationContext;
 import com.intellij.execution.actions.ConfigurationFromContext;
@@ -41,7 +41,7 @@ import org.junit.runners.JUnit4;
 public class GoBinaryContextProviderTest extends BlazeRunConfigurationProducerTestCase {
 
   @Test
-  public void contextProducedFromBinaryGoFileIsBinaryTarget() {
+  public void contextProducedFromBinaryGoFileIsBinaryTarget() throws Throwable {
     PsiFile goFile =
         createAndIndexFile(new WorkspacePath("foo/bar/main.go"), "package main", "func main() {}");
 
@@ -69,12 +69,13 @@ public class GoBinaryContextProviderTest extends BlazeRunConfigurationProducerTe
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget()).isEqualTo(TargetExpression.fromStringSafe("//foo/bar:main"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//foo/bar:main"));
     assertThat(getCommandType(config)).isEqualTo(BlazeCommandName.RUN);
   }
 
   @Test
-  public void contextProducedFromLibraryGoFileIsBinaryTarget() {
+  public void contextProducedFromLibraryGoFileIsBinaryTarget() throws Throwable {
     PsiFile goFile =
         createAndIndexFile(new WorkspacePath("foo/bar/main.go"), "package main", "func main() {}");
 
@@ -107,7 +108,8 @@ public class GoBinaryContextProviderTest extends BlazeRunConfigurationProducerTe
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget()).isEqualTo(TargetExpression.fromStringSafe("//foo/bar:main"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//foo/bar:main"));
     assertThat(getCommandType(config)).isEqualTo(BlazeCommandName.RUN);
   }
 }

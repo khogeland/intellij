@@ -37,6 +37,7 @@ import com.google.idea.blaze.base.model.ProjectTargetData;
 import com.google.idea.blaze.base.model.primitives.WorkspaceRoot;
 import com.google.idea.blaze.base.projectview.ProjectViewManager;
 import com.google.idea.blaze.base.projectview.ProjectViewSet;
+import com.google.idea.blaze.base.projectview.section.sections.ImportSection;
 import com.google.idea.blaze.base.scope.BlazeContext;
 import com.google.idea.blaze.base.scope.Scope;
 import com.google.idea.blaze.base.scope.output.IssueOutput;
@@ -64,8 +65,8 @@ import com.google.idea.blaze.base.sync.data.BlazeProjectDataManagerImpl;
 import com.google.idea.blaze.base.sync.libraries.BlazeLibraryCollector;
 import com.google.idea.blaze.base.sync.projectstructure.ModuleFinder;
 import com.google.idea.blaze.base.util.SaveUtil;
-import com.google.idea.common.concurrency.ConcurrencyUtil;
 import com.google.idea.common.experiments.BoolExperiment;
+import com.google.idea.common.util.ConcurrencyUtil;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.diagnostic.Logger;
@@ -287,6 +288,9 @@ final class SyncPhaseCoordinator {
     try {
       SaveUtil.saveAllFiles();
       onSyncStart(project, context, params.syncMode());
+      if (!context.shouldContinue()) {
+        return;
+      }
       BlazeProjectData oldProjectData = getOldProjectData(context, params.syncMode());
       if (oldProjectData == null) {
         String message = "Can't filter project targets: project has never been synced.";
@@ -348,6 +352,18 @@ final class SyncPhaseCoordinator {
     try {
       SaveUtil.saveAllFiles();
       onSyncStart(project, context, params.syncMode());
+      if (!context.shouldContinue()) {
+        finishSync(
+            params,
+            startTime,
+            context,
+            ProjectViewManager.getInstance(project).getProjectViewSet(),
+            ImmutableSet.of(buildId),
+            SyncResult.FAILURE,
+            SyncStats.builder());
+        return;
+      }
+
       if (params.syncMode() == SyncMode.STARTUP) {
         finishSync(
             params,
@@ -475,6 +491,7 @@ final class SyncPhaseCoordinator {
       }
     } catch (Throwable e) {
       logSyncError(context, e);
+      syncResult = SyncResult.FAILURE;
     } finally {
       SyncProjectState projectState = updateTask.projectState();
       finishSync(
@@ -516,19 +533,17 @@ final class SyncPhaseCoordinator {
       if (syncResult.successful()) {
         Preconditions.checkNotNull(projectViewSet);
         BlazeProjectData projectData =
-            BlazeProjectDataManager.getInstance(project).getBlazeProjectData();
+            Preconditions.checkNotNull(
+                BlazeProjectDataManager.getInstance(project).getBlazeProjectData());
         if (syncParams.syncMode() != SyncMode.NO_BUILD) {
           stats.addTimedEvents(
               updateInMemoryState(
                   project, context, projectViewSet, projectData, syncParams.syncMode()));
         }
-        if (projectData != null) {
-          int librariesCount =
-              BlazeLibraryCollector.getLibraries(projectViewSet, projectData).size();
-          stats
-              .setTargetMapSize(projectData.getTargetMap().targets().size())
-              .setLibraryCount(librariesCount);
-        }
+        int librariesCount = BlazeLibraryCollector.getLibraries(projectViewSet, projectData).size();
+        stats
+            .setTargetMapSize(projectData.getTargetMap().targets().size())
+            .setLibraryCount(librariesCount);
         onSyncComplete(
             project, context, projectViewSet, buildIds, projectData, syncParams, syncResult);
       }
@@ -607,7 +622,9 @@ final class SyncPhaseCoordinator {
     if (projectState != null) {
       stats
           .setWorkspaceType(projectState.getLanguageSettings().getWorkspaceType())
-          .setLanguagesActive(projectState.getLanguageSettings().getActiveLanguages());
+          .setLanguagesActive(projectState.getLanguageSettings().getActiveLanguages())
+          .setBlazeProjectFiles(
+              projectState.getProjectViewSet().listScalarItems(ImportSection.KEY));
     }
     if (buildResult != null) {
       buildResult
@@ -656,11 +673,14 @@ final class SyncPhaseCoordinator {
     return timedEvents;
   }
 
-  private static void onSyncStart(Project project, BlazeContext context, SyncMode syncMode) {
-    final SyncListener[] syncListeners = SyncListener.EP_NAME.getExtensions();
-    for (SyncListener syncListener : syncListeners) {
-      syncListener.onSyncStart(project, context, syncMode);
-    }
+  private static void onSyncStart(Project project, BlazeContext parentContext, SyncMode syncMode) {
+    SyncScope.push(
+        parentContext,
+        context -> {
+          for (SyncListener listener : SyncListener.EP_NAME.getExtensions()) {
+            listener.onSyncStart(project, context, syncMode);
+          }
+        });
   }
 
   private static void afterSync(

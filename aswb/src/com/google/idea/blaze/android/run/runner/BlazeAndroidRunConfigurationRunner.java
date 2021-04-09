@@ -21,17 +21,16 @@ import com.android.tools.idea.run.AndroidSessionInfo;
 import com.android.tools.idea.run.DeviceFutures;
 import com.android.tools.idea.run.LaunchOptions;
 import com.android.tools.idea.run.editor.DeployTarget;
-import com.android.tools.idea.run.editor.DeployTargetState;
 import com.android.tools.idea.run.util.LaunchUtils;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.idea.blaze.android.run.AndroidSessionInfoCompat;
 import com.google.idea.blaze.android.run.BlazeAndroidRunState;
 import com.google.idea.blaze.base.async.executor.ProgressiveTaskWithProgressIndicator;
 import com.google.idea.blaze.base.command.BlazeInvocationContext;
 import com.google.idea.blaze.base.experiments.ExperimentScope;
 import com.google.idea.blaze.base.issueparser.IssueOutputFilter;
 import com.google.idea.blaze.base.model.primitives.WorkspaceRoot;
+import com.google.idea.blaze.base.run.BlazeCommandRunConfiguration;
 import com.google.idea.blaze.base.run.confighandler.BlazeCommandRunConfigurationRunner;
 import com.google.idea.blaze.base.scope.BlazeContext;
 import com.google.idea.blaze.base.scope.Scope;
@@ -44,7 +43,6 @@ import com.google.idea.blaze.base.settings.Blaze;
 import com.google.idea.blaze.base.settings.BlazeUserSettings;
 import com.intellij.execution.ExecutionException;
 import com.intellij.execution.Executor;
-import com.intellij.execution.configurations.RunConfiguration;
 import com.intellij.execution.configurations.RunProfileState;
 import com.intellij.execution.executors.DefaultDebugExecutor;
 import com.intellij.execution.runners.ExecutionEnvironment;
@@ -77,20 +75,12 @@ public final class BlazeAndroidRunConfigurationRunner
 
   private final Module module;
   private final BlazeAndroidRunContext runContext;
-  private final BlazeAndroidRunConfigurationDeployTargetManager deployTargetManager;
-  private final BlazeAndroidRunConfigurationDebuggerManager debuggerManager;
-  private final RunConfiguration runConfig;
+  private final BlazeCommandRunConfiguration runConfig;
 
   public BlazeAndroidRunConfigurationRunner(
-      Module module,
-      BlazeAndroidRunContext runContext,
-      BlazeAndroidRunConfigurationDeployTargetManager deployTargetManager,
-      BlazeAndroidRunConfigurationDebuggerManager debuggerManager,
-      RunConfiguration runConfig) {
+      Module module, BlazeAndroidRunContext runContext, BlazeCommandRunConfiguration runConfig) {
     this.module = module;
     this.runContext = runContext;
-    this.deployTargetManager = deployTargetManager;
-    this.debuggerManager = debuggerManager;
     this.runConfig = runConfig;
   }
 
@@ -105,27 +95,19 @@ public final class BlazeAndroidRunConfigurationRunner
 
     boolean isDebug = executor instanceof DefaultDebugExecutor;
     AndroidSessionInfo info =
-        AndroidSessionInfoCompat.findOldSession(project, null, runConfig, env.getExecutionTarget());
+        AndroidSessionInfo.findOldSession(project, null, runConfig, env.getExecutionTarget());
 
     BlazeAndroidDeviceSelector deviceSelector = runContext.getDeviceSelector();
     BlazeAndroidDeviceSelector.DeviceSession deviceSession =
         deviceSelector.getDevice(
-            project,
-            facet,
-            deployTargetManager,
-            executor,
-            env,
-            info,
-            isDebug,
-            runConfig.getUniqueID());
+            project, facet, executor, env, info, isDebug, runConfig.getUniqueID());
     if (deviceSession == null) {
       return null;
     }
 
     DeployTarget deployTarget = deviceSession.deployTarget;
     if (deployTarget != null && deployTarget.hasCustomRunProfileState(executor)) {
-      DeployTargetState deployTargetState = deployTargetManager.getCurrentDeployTargetState();
-      return deployTarget.getRunProfileState(executor, env, deployTargetState);
+      return DeployTargetCompat.getRunProfileState(deployTarget, executor, env);
     }
 
     DeviceFutures deviceFutures = deviceSession.deviceFutures;
@@ -153,8 +135,7 @@ public final class BlazeAndroidRunConfigurationRunner
     env.putCopyableUserData(RUN_CONTEXT_KEY, runContext);
     env.putCopyableUserData(DEVICE_SESSION_KEY, deviceSession);
 
-    return new BlazeAndroidRunState(
-        module, env, launchOptionsBuilder, isDebug, deviceSession, runContext, debuggerManager);
+    return new BlazeAndroidRunState(env, launchOptionsBuilder, deviceSession, runContext);
   }
 
   private static String canDebug(

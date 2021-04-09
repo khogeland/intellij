@@ -18,24 +18,33 @@ package com.google.idea.blaze.android.sync.importer;
 import com.android.ide.common.util.PathHashMapKt;
 import com.android.ide.common.util.PathMap;
 import com.android.ide.common.util.PathString;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.idea.blaze.android.projectview.GeneratedAndroidResourcesSection;
+import com.google.idea.blaze.base.ideinfo.AndroidAarIdeInfo;
 import com.google.idea.blaze.base.ideinfo.AndroidIdeInfo;
 import com.google.idea.blaze.base.ideinfo.ArtifactLocation;
 import com.google.idea.blaze.base.ideinfo.LibraryArtifact;
 import com.google.idea.blaze.base.ideinfo.TargetIdeInfo;
 import com.google.idea.blaze.base.ideinfo.TargetMap;
+import com.google.idea.blaze.base.model.BlazeProjectData;
 import com.google.idea.blaze.base.model.primitives.LanguageClass;
 import com.google.idea.blaze.base.model.primitives.WorkspacePath;
+import com.google.idea.blaze.base.model.primitives.WorkspaceRoot;
+import com.google.idea.blaze.base.projectview.ProjectViewManager;
 import com.google.idea.blaze.base.projectview.ProjectViewSet;
 import com.google.idea.blaze.base.scope.BlazeContext;
 import com.google.idea.blaze.base.scope.Output;
 import com.google.idea.blaze.base.scope.output.IssueOutput;
+import com.google.idea.blaze.base.settings.Blaze;
+import com.google.idea.blaze.base.sync.data.BlazeProjectDataManager;
 import com.google.idea.blaze.base.sync.projectview.ImportRoots;
 import com.google.idea.blaze.base.sync.projectview.ProjectViewTargetImportFilter;
 import com.google.idea.blaze.java.sync.model.BlazeContentEntry;
 import com.google.idea.blaze.java.sync.model.BlazeJarLibrary;
+import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.text.StringUtil;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -64,7 +73,51 @@ public class BlazeImportUtil {
     if (ideInfo != null) {
       return ideInfo.getResourceJavaPackage();
     }
+
+    AndroidAarIdeInfo aarIdeInfo = target.getAndroidAarIdeInfo();
+    if (aarIdeInfo != null) {
+      return aarIdeInfo.getCustomJavaPackage();
+    }
+
     return null;
+  }
+
+  @Nullable
+  public static String javaResourcePackageFor(TargetIdeInfo target, boolean inferPackage) {
+    String definedJavaPackage = javaResourcePackageFor(target);
+    if (!inferPackage || definedJavaPackage != null) {
+      return definedJavaPackage;
+    }
+
+    return inferJavaResourcePackage(target.getKey().getLabel().blazePackage().relativePath());
+  }
+
+  @VisibleForTesting
+  static String inferJavaResourcePackage(String blazeRelativePath) {
+    // Blaze ensures that all android targets either provide a custom package override, or have
+    // blaze package of the form:
+    //        //any/path/java/package/name/with/slashes, or
+    //        //any/path/javatests/package/name/with/slashes
+    // We use this fact to infer package name.
+
+    // Using the separator `/` to ensure we do not accidentally catch things like "/java_src/"
+    // or "/somenamejava/"
+    String javaPackage = "/" + blazeRelativePath;
+    String workingPackage;
+
+    // get everything after `/java/` , or no-op if `/java/` is not present
+    workingPackage = StringUtil.substringAfterLast(javaPackage, "/java/");
+    javaPackage = workingPackage == null ? javaPackage : "/" + workingPackage;
+
+    // get everything after `/javatests/` , or no-op if `/javatests/` is not present
+    workingPackage = StringUtil.substringAfterLast(javaPackage, "/javatests/");
+    javaPackage = workingPackage == null ? javaPackage : "/" + workingPackage;
+
+    if (javaPackage.startsWith("/")) {
+      javaPackage = javaPackage.substring(1);
+    }
+
+    return javaPackage.replace('/', '.');
   }
 
   static Consumer<Output> asConsumer(BlazeContext context) {
@@ -87,7 +140,7 @@ public class BlazeImportUtil {
   static Stream<TargetIdeInfo> getSourceTargetsStream(
       TargetMap targetMap, ProjectViewTargetImportFilter importFilter) {
     return targetMap.targets().stream()
-        .filter(target -> target.getKind().getLanguageClass() == LanguageClass.ANDROID)
+        .filter(target -> target.getKind().hasLanguage(LanguageClass.ANDROID))
         .filter(target -> target.getAndroidIdeInfo() != null)
         .filter(importFilter::isSourceTarget)
         .filter(target -> !importFilter.excludeTarget(target));
@@ -99,6 +152,32 @@ public class BlazeImportUtil {
    */
   public static Stream<TargetIdeInfo> getSourceTargetsStream(BlazeImportInput input) {
     return getSourceTargetsStream(input.targetMap, input.createImportFilter());
+  }
+
+  /**
+   * Returns the stream of {@link TargetIdeInfo} corresponding to source targets in the given {@link
+   * Project}
+   */
+  public static Stream<TargetIdeInfo> getSourceTargetsStream(Project project) {
+    BlazeProjectData projectData =
+        BlazeProjectDataManager.getInstance(project).getBlazeProjectData();
+    if (projectData == null) {
+      return Stream.empty();
+    }
+    return getSourceTargetsStream(
+        project, projectData, ProjectViewManager.getInstance(project).getProjectViewSet());
+  }
+
+  /**
+   * Returns the stream of {@link TargetIdeInfo} corresponding to source targets in the given {@link
+   * Project}, {@link BlazeProjectData}, and {@link ProjectViewSet}
+   */
+  public static Stream<TargetIdeInfo> getSourceTargetsStream(
+      Project project, BlazeProjectData projectData, ProjectViewSet projectViewSet) {
+    ProjectViewTargetImportFilter importFilter =
+        new ProjectViewTargetImportFilter(
+            Blaze.getBuildSystem(project), WorkspaceRoot.fromProject(project), projectViewSet);
+    return getSourceTargetsStream(projectData.getTargetMap(), importFilter);
   }
 
   /** Returns the source targets for the given {@link BlazeImportInput} as a {@link List}. */
@@ -121,8 +200,16 @@ public class BlazeImportUtil {
         .collect(ImmutableList.toImmutableList());
   }
 
+  static ImmutableList<BlazeJarLibrary> getResourceJars(Collection<TargetIdeInfo> targets) {
+    return targets.stream()
+        .filter(
+            e -> e.getAndroidIdeInfo() != null && e.getAndroidIdeInfo().getResourceJar() != null)
+        .map(e -> new BlazeJarLibrary(e.getAndroidIdeInfo().getResourceJar(), e.getKey()))
+        .collect(ImmutableList.toImmutableList());
+  }
+
   /** Returns the set of relative generated resource paths for the given {@link ProjectViewSet}. */
-  public static ImmutableSet<String> getWhitelistedGenResourcePaths(ProjectViewSet projectViewSet) {
+  public static ImmutableSet<String> getAllowedGenResourcePaths(ProjectViewSet projectViewSet) {
     return ImmutableSet.copyOf(
         projectViewSet.listItems(GeneratedAndroidResourcesSection.KEY).stream()
             .map(genfilesPath -> genfilesPath.relativePath)

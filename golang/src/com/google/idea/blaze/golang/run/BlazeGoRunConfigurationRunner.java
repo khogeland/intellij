@@ -15,6 +15,8 @@
  */
 package com.google.idea.blaze.golang.run;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import com.goide.execution.application.GoApplicationConfiguration;
 import com.goide.execution.application.GoApplicationConfiguration.Kind;
 import com.goide.execution.application.GoApplicationRunConfigurationType;
@@ -36,6 +38,7 @@ import com.google.idea.blaze.base.command.info.BlazeInfo;
 import com.google.idea.blaze.base.io.FileOperationProvider;
 import com.google.idea.blaze.base.model.BlazeProjectData;
 import com.google.idea.blaze.base.model.primitives.Label;
+import com.google.idea.blaze.base.model.primitives.TargetExpression;
 import com.google.idea.blaze.base.model.primitives.WorkspaceRoot;
 import com.google.idea.blaze.base.run.BlazeBeforeRunCommandHelper;
 import com.google.idea.blaze.base.run.BlazeCommandRunConfiguration;
@@ -71,12 +74,14 @@ import com.intellij.util.PathUtil;
 import com.intellij.util.execution.ParametersListUtil;
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
@@ -106,7 +111,7 @@ public class BlazeGoRunConfigurationRunner implements BlazeCommandRunConfigurati
   }
 
   private static final BoolExperiment scriptPathEnabled =
-      new BoolExperiment("blaze.go.script.path.enabled", true);
+      new BoolExperiment("blaze.go.script.path.enabled.2", true);
 
   /** Used to store a runner to an {@link ExecutionEnvironment}. */
   private static final Key<AtomicReference<ExecutableInfo>> EXECUTABLE_KEY =
@@ -184,33 +189,45 @@ public class BlazeGoRunConfigurationRunner implements BlazeCommandRunConfigurati
         throw new ExecutionException("Workspace module not found");
       }
       GoApplicationRunningState nativeState =
-          new GoApplicationRunningState(env, module, nativeConfig) {
-            @Override
-            public boolean isDebug() {
-              return true;
-            }
-
-            @Nullable
-            @Override
-            public List<String> getBuildingTarget() {
-              return null;
-            }
-
-            @Nullable
-            @Override
-            public GoExecutor createBuildExecutor() {
-              return null;
-            }
-          };
+          new DerivedGoApplicationRunningState(env, module, nativeConfig);
       nativeState.setOutputFilePath(executable.binary.getPath());
       return nativeState;
     }
 
     @Nullable
     @Override
-    @SuppressWarnings("rawtypes")
-    public ExecutionResult execute(Executor executor, ProgramRunner runner) {
+    public ExecutionResult execute(Executor executor, ProgramRunner<?> runner) {
       return null;
+    }
+
+    // #api201: Remove 'unchecked' warning suppression, necessary for getBuildingTarget().
+    // (background: b/148802231)
+    @SuppressWarnings("unchecked")
+    private static class DerivedGoApplicationRunningState extends GoApplicationRunningState {
+
+      public DerivedGoApplicationRunningState(
+          ExecutionEnvironment env, Module module, GoApplicationConfiguration configuration) {
+        super(env, module, configuration);
+      }
+
+      @Override
+      public boolean isDebug() {
+        return true;
+      }
+
+      // #api201: Super method uses different generic type for list in 2020.2.
+      @SuppressWarnings({"rawtypes", "unchecked"})
+      @Nullable
+      @Override
+      public List getBuildingTarget() {
+        return null;
+      }
+
+      @Nullable
+      @Override
+      public GoExecutor createBuildExecutor() {
+        return null;
+      }
     }
   }
 
@@ -248,6 +265,15 @@ public class BlazeGoRunConfigurationRunner implements BlazeCommandRunConfigurati
     return false;
   }
 
+  private static Label getSingleTarget(BlazeCommandRunConfiguration config)
+      throws ExecutionException {
+    ImmutableList<? extends TargetExpression> targets = config.getTargets();
+    if (targets.size() != 1 || !(targets.get(0) instanceof Label)) {
+      throw new ExecutionException("Invalid configuration: doesn't have a single target label");
+    }
+    return (Label) targets.get(0);
+  }
+
   /**
    * Builds blaze go target and returns the output build artifact.
    *
@@ -263,6 +289,7 @@ public class BlazeGoRunConfigurationRunner implements BlazeCommandRunConfigurati
     if (blazeProjectData == null) {
       throw new ExecutionException("Not synced yet, please sync project");
     }
+    Label label = getSingleTarget(configuration);
 
     SaveUtil.saveAllFiles();
     try (BuildResultHelper buildResultHelper = BuildResultHelperProvider.create(project)) {
@@ -278,15 +305,21 @@ public class BlazeGoRunConfigurationRunner implements BlazeCommandRunConfigurati
         flags.add("--compilation_mode=dbg");
       }
 
-      File scriptPathFile = null;
+      Optional<Path> scriptPath = Optional.empty();
       if (scriptPathEnabled.getValue()) {
-        scriptPathFile = BlazeBeforeRunCommandHelper.createScriptPathFile();
-        flags.add("--script_path=" + scriptPathFile);
+        try {
+          scriptPath = Optional.of(BlazeBeforeRunCommandHelper.createScriptPathFile());
+          flags.add("--script_path=" + scriptPath.get());
+        } catch (IOException e) {
+          // Could still work without script path.
+          // Script path is only needed to parse arguments from target.
+          logger.warn("Failed to create script path file. Target arguments will not be parsed.", e);
+        }
       }
 
       ListenableFuture<BuildResult> buildOperation =
           BlazeBeforeRunCommandHelper.runBlazeCommand(
-              scriptPathEnabled.getValue() ? BlazeCommandName.RUN : BlazeCommandName.BUILD,
+              scriptPath.isPresent() ? BlazeCommandName.RUN : BlazeCommandName.BUILD,
               configuration,
               buildResultHelper,
               flags.build(),
@@ -312,45 +345,42 @@ public class BlazeGoRunConfigurationRunner implements BlazeCommandRunConfigurati
       } catch (java.util.concurrent.ExecutionException e) {
         throw new ExecutionException(e);
       }
-      if (scriptPathEnabled.getValue()) {
-        if (!scriptPathFile.exists()) {
+      if (scriptPath.isPresent()) {
+        if (!Files.exists(scriptPath.get())) {
           throw new ExecutionException(
               String.format(
                   "No debugger executable script path file produced. Expected file at: %s",
-                  scriptPathFile));
+                  scriptPath.get()));
         }
         WorkspaceRoot workspaceRoot = WorkspaceRoot.fromProject(project);
         BlazeInfo blazeInfo =
             BlazeProjectDataManager.getInstance(project).getBlazeProjectData().getBlazeInfo();
-        return parseScriptPathFile(workspaceRoot, blazeInfo.getExecutionRoot(), scriptPathFile);
+        return parseScriptPathFile(workspaceRoot, blazeInfo.getExecutionRoot(), scriptPath.get());
       } else {
         List<File> candidateFiles;
         try {
           candidateFiles =
               BlazeArtifact.getLocalFiles(
-                      buildResultHelper.getBuildArtifactsForTarget(
-                          (Label) configuration.getTarget(), file -> true))
+                      buildResultHelper.getBuildArtifactsForTarget(label, file -> true))
                   .stream()
                   .filter(File::canExecute)
                   .collect(Collectors.toList());
         } catch (GetArtifactsException e) {
           throw new ExecutionException(
               String.format(
-                  "Failed to get output artifacts when building %s: %s",
-                  configuration.getTarget(), e.getMessage()));
+                  "Failed to get output artifacts when building %s: %s", label, e.getMessage()));
         }
         if (candidateFiles.isEmpty()) {
           throw new ExecutionException(
-              String.format(
-                  "No output artifacts found when building %s", configuration.getTarget()));
+              String.format("No output artifacts found when building %s", label));
         }
-        File binary = findExecutable((Label) configuration.getTarget(), candidateFiles);
+        File binary = findExecutable(label, candidateFiles);
         if (binary == null) {
           throw new ExecutionException(
               String.format(
                   "More than 1 executable was produced when building %s; "
                       + "don't know which one to debug",
-                  configuration.getTarget()));
+                  label));
         }
         LocalFileSystem.getInstance().refreshIoFiles(ImmutableList.of(binary));
         File workingDir = getWorkingDirectory(WorkspaceRoot.fromProject(project), binary);
@@ -383,14 +413,12 @@ public class BlazeGoRunConfigurationRunner implements BlazeCommandRunConfigurati
   private static final Pattern ARGS = Pattern.compile("([^\']\\S*|\'.+?\')\\s*");
 
   private static ExecutableInfo parseScriptPathFile(
-      WorkspaceRoot workspaceRoot, File execRoot, File scriptPathFile) throws ExecutionException {
+      WorkspaceRoot workspaceRoot, File execRoot, Path scriptPath) throws ExecutionException {
     String text;
     try {
-      text =
-          MoreFiles.asCharSource(Paths.get(scriptPathFile.getPath()), StandardCharsets.UTF_8)
-              .read();
+      text = MoreFiles.asCharSource(scriptPath, UTF_8).read();
     } catch (IOException e) {
-      throw new ExecutionException("Could not read script_path: " + scriptPathFile, e);
+      throw new ExecutionException("Could not read script_path: " + scriptPath, e);
     }
     String lastLine = Iterables.getLast(Splitter.on('\n').split(text));
     List<String> args = new ArrayList<>();
@@ -408,7 +436,7 @@ public class BlazeGoRunConfigurationRunner implements BlazeCommandRunConfigurati
     if (testScrDir.find()) {
       // Format is <wrapper-script> <executable> arg0 arg1 arg2 ... argN "@"
       if (args.size() < 3) {
-        throw new ExecutionException("Failed to parse args in script_path: " + scriptPathFile);
+        throw new ExecutionException("Failed to parse args in script_path: " + scriptPath);
       }
       envVars.put("TEST_SRCDIR", testScrDir.group(1));
       workingDir = workspaceRoot.directory();
@@ -425,7 +453,7 @@ public class BlazeGoRunConfigurationRunner implements BlazeCommandRunConfigurati
     } else {
       // Format is <executable> [arg0 arg1 arg2 ... argN] "@"
       if (args.size() < 2) {
-        throw new ExecutionException("Failed to parse args in script_path: " + scriptPathFile);
+        throw new ExecutionException("Failed to parse args in script_path: " + scriptPath);
       }
       binary = new File(args.get(0));
       workingDir = getWorkingDirectory(workspaceRoot, binary);

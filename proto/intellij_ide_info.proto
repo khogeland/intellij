@@ -18,6 +18,7 @@ package blaze;
 
 import "proto/common.proto";
 
+// option java_api_version = 2;
 option java_package = "com.google.devtools.intellij.ideinfo";
 
 message JavaSourcePackage {
@@ -78,6 +79,10 @@ message AndroidIdeInfo {
   repeated ResFolderLocation res_folders = 13;
   // Label for the target android_binary to instrument.
   string instruments = 14;
+  // Jar used for resolving render time dependencies. Contains all runtime
+  // dependencies of a binary without the desugared APIs. This field is not set
+  // for non-binary targets
+  ArtifactLocation render_resolve_jar = 15;
 }
 
 // Details about an Android res folder
@@ -86,8 +91,10 @@ message ResFolderLocation {
   ArtifactLocation root = 1;
   // Relative paths to the specific res files underneath the root. If empty, all
   // res files
-  // Deprecated: we no longer return path to resources.
+  // Deprecated: we no longer return path to resources. Instead, resource files
+  // will be packed as an aar and stored in aar field
   repeated string resources = 2 [deprecated = true];
+  ArtifactLocation aar = 3;
 }
 
 message AndroidSdkIdeInfo {
@@ -96,6 +103,7 @@ message AndroidSdkIdeInfo {
 
 message AndroidAarIdeInfo {
   ArtifactLocation aar = 1;
+  string java_package = 2;
 }
 
 // Details about an android instrumentation test.
@@ -167,6 +175,7 @@ message JavaToolchainIdeInfo {
 message KotlinToolchainIdeInfo {
   string language_version = 1;
   repeated string sdk_library_targets = 2;
+  repeated string kotlin_compiler_common_flags = 3;
 }
 
 message TargetKey {

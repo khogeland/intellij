@@ -20,19 +20,19 @@ import static com.google.common.base.Preconditions.checkState;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
-import com.google.devtools.build.lib.skylarkdebugging.SkylarkDebuggingProtos;
-import com.google.devtools.build.lib.skylarkdebugging.SkylarkDebuggingProtos.ContinueExecutionRequest;
-import com.google.devtools.build.lib.skylarkdebugging.SkylarkDebuggingProtos.DebugEvent;
-import com.google.devtools.build.lib.skylarkdebugging.SkylarkDebuggingProtos.DebugEvent.PayloadCase;
-import com.google.devtools.build.lib.skylarkdebugging.SkylarkDebuggingProtos.DebugRequest;
-import com.google.devtools.build.lib.skylarkdebugging.SkylarkDebuggingProtos.EvaluateRequest;
-import com.google.devtools.build.lib.skylarkdebugging.SkylarkDebuggingProtos.Location;
-import com.google.devtools.build.lib.skylarkdebugging.SkylarkDebuggingProtos.PauseReason;
-import com.google.devtools.build.lib.skylarkdebugging.SkylarkDebuggingProtos.PauseThreadRequest;
-import com.google.devtools.build.lib.skylarkdebugging.SkylarkDebuggingProtos.PausedThread;
-import com.google.devtools.build.lib.skylarkdebugging.SkylarkDebuggingProtos.SetBreakpointsRequest;
-import com.google.devtools.build.lib.skylarkdebugging.SkylarkDebuggingProtos.StartDebuggingRequest;
-import com.google.devtools.build.lib.skylarkdebugging.SkylarkDebuggingProtos.Stepping;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.ContinueExecutionRequest;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.DebugEvent;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.DebugEvent.PayloadCase;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.DebugRequest;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.EvaluateRequest;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.Location;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.PauseReason;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.PauseThreadRequest;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.PausedThread;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.SetBreakpointsRequest;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.StartDebuggingRequest;
+import com.google.devtools.build.lib.starlarkdebugging.StarlarkDebuggingProtos.Stepping;
 import com.intellij.execution.ExecutionResult;
 import com.intellij.execution.process.ProcessAdapter;
 import com.intellij.execution.process.ProcessEvent;
@@ -81,9 +81,14 @@ public class SkylarkDebugProcess extends XDebugProcess {
   // TODO(brendandouglas): Here for backwards-compatibility, remove in v2018.10+
   private volatile boolean debuggingStarted = false;
 
+  // SkylarkLineBreakpointType extends from XLineBreakpointTypeBase which uses raw
+  // XBreakpointProperties. The raw use of XBreakpointProperties needs to propagate to all affected
+  // classes. Check XLineBreakpointTypeBase again after #api202.
+  @SuppressWarnings("rawtypes")
   // state shared with debug server
   private final ConcurrentMap<Location, XLineBreakpoint<XBreakpointProperties>> lineBreakpoints =
       new ConcurrentHashMap<>();
+
   private final ConcurrentMap<Long, PausedThreadState> pausedThreads = new ConcurrentHashMap<>();
   // the currently-stepping thread gets priority in the UI -- we always grab focus when it's paused
   private volatile long currentlySteppingThreadId = 0;
@@ -103,7 +108,7 @@ public class SkylarkDebugProcess extends XDebugProcess {
 
   @Override
   public XBreakpointHandler<?>[] getBreakpointHandlers() {
-    return new XBreakpointHandler[] {new SkylarkLineBreakpointHandler(this)};
+    return new XBreakpointHandler<?>[] {new SkylarkLineBreakpointHandler(this)};
   }
 
   @Override
@@ -205,10 +210,12 @@ public class SkylarkDebugProcess extends XDebugProcess {
     registerBreakpoints();
   }
 
-  private static SkylarkDebuggingProtos.Breakpoint getBreakpointProto(
+  // Check XLineBreakpointTypeBase for raw use of XBreakpointProperties after #api202.
+  @SuppressWarnings("rawtypes")
+  private static StarlarkDebuggingProtos.Breakpoint getBreakpointProto(
       Location location, XLineBreakpoint<XBreakpointProperties> breakpoint) {
-    SkylarkDebuggingProtos.Breakpoint.Builder builder =
-        SkylarkDebuggingProtos.Breakpoint.newBuilder().setLocation(location);
+    StarlarkDebuggingProtos.Breakpoint.Builder builder =
+        StarlarkDebuggingProtos.Breakpoint.newBuilder().setLocation(location);
     String condition = getConditionExpression(breakpoint);
     if (condition != null) {
       builder.setExpression(condition);
@@ -223,7 +230,7 @@ public class SkylarkDebugProcess extends XDebugProcess {
         : breakpoint.getConditionExpression().getExpression();
   }
 
-  private void reportError(SkylarkDebuggingProtos.Error error) {
+  private void reportError(StarlarkDebuggingProtos.Error error) {
     reportError(error.getMessage());
   }
 
@@ -257,6 +264,8 @@ public class SkylarkDebugProcess extends XDebugProcess {
     return false;
   }
 
+  // Check XLineBreakpointTypeBase for raw use of XBreakpointProperties after #api202.
+  @SuppressWarnings("rawtypes")
   private Location convertLocation(XLineBreakpoint<XBreakpointProperties> breakpoint) {
     // TODO(brendandouglas): handle local changes?
     return Location.newBuilder()
@@ -346,6 +355,8 @@ public class SkylarkDebugProcess extends XDebugProcess {
     return 0;
   }
 
+  // Check XLineBreakpointTypeBase for raw use of XBreakpointProperties after #api202.
+  @SuppressWarnings("rawtypes")
   void addBreakpoint(XLineBreakpoint<XBreakpointProperties> breakpoint) {
     lineBreakpoints.put(convertLocation(breakpoint), breakpoint);
     if (isConnected()) {
@@ -353,6 +364,8 @@ public class SkylarkDebugProcess extends XDebugProcess {
     }
   }
 
+  // Check XLineBreakpointTypeBase for raw use of XBreakpointProperties after #api202.
+  @SuppressWarnings("rawtypes")
   void removeBreakpoint(XLineBreakpoint<XBreakpointProperties> breakpoint) {
     boolean changed = lineBreakpoints.remove(convertLocation(breakpoint)) != null;
     if (changed && isConnected()) {
@@ -406,8 +419,8 @@ public class SkylarkDebugProcess extends XDebugProcess {
   }
 
   @Nullable
-  List<SkylarkDebuggingProtos.Value> getChildren(
-      long threadId, SkylarkDebuggingProtos.Value value) {
+  List<StarlarkDebuggingProtos.Value> getChildren(
+      long threadId, StarlarkDebuggingProtos.Value value) {
     PausedThreadState threadState = pausedThreads.get(threadId);
     if (threadState == null) {
       return null;
@@ -420,7 +433,7 @@ public class SkylarkDebugProcess extends XDebugProcess {
         transport.sendRequest(
             DebugRequest.newBuilder()
                 .setListFrames(
-                    SkylarkDebuggingProtos.ListFramesRequest.newBuilder().setThreadId(threadId)));
+                    StarlarkDebuggingProtos.ListFramesRequest.newBuilder().setThreadId(threadId)));
     if (response == null) {
       container.errorOccurred("No frames data received from the Skylark debugger");
       return;
@@ -430,16 +443,16 @@ public class SkylarkDebugProcess extends XDebugProcess {
       return;
     }
     checkState(response.getPayloadCase() == PayloadCase.LIST_FRAMES);
-    List<SkylarkDebuggingProtos.Frame> frames = response.getListFrames().getFrameList();
+    List<StarlarkDebuggingProtos.Frame> frames = response.getListFrames().getFrameList();
     container.addStackFrames(
         frames.stream().map(f -> convert(threadId, f)).collect(Collectors.toList()), true);
   }
 
-  private SkylarkStackFrame convert(long threadId, SkylarkDebuggingProtos.Frame frame) {
+  private SkylarkStackFrame convert(long threadId, StarlarkDebuggingProtos.Frame frame) {
     return new SkylarkStackFrame(this, threadId, frame);
   }
 
-  void handleEvent(SkylarkDebuggingProtos.DebugEvent event) {
+  void handleEvent(StarlarkDebuggingProtos.DebugEvent event) {
     switch (event.getPayloadCase()) {
       case ERROR:
         reportError(event.getError());
@@ -485,6 +498,8 @@ public class SkylarkDebugProcess extends XDebugProcess {
     }
   }
 
+  // Check XLineBreakpointTypeBase for raw use of XBreakpointProperties after #api202.
+  @SuppressWarnings("rawtypes")
   private void handleThreadPausedEvent(PausedThread thread) {
     // ignore threads paused during initialization
     if (!debuggingStarted && thread.getPauseReason() == PauseReason.ALL_THREADS_PAUSED) {
@@ -512,6 +527,8 @@ public class SkylarkDebugProcess extends XDebugProcess {
     notifyThreadPaused(new PausedThreadState(thread), /* alwaysNotify= */ false);
   }
 
+  // Check XLineBreakpointTypeBase for raw use of XBreakpointProperties after #api202.
+  @SuppressWarnings("rawtypes")
   private void notifyThreadPaused(PausedThreadState threadState, boolean alwaysNotify) {
     pausedThreads.put(threadState.thread.getId(), threadState);
     XLineBreakpoint<XBreakpointProperties> breakpoint =
@@ -536,7 +553,7 @@ public class SkylarkDebugProcess extends XDebugProcess {
     }
   }
 
-  private boolean individualThreadPausedByUser(SkylarkDebuggingProtos.PauseReason reason) {
+  private boolean individualThreadPausedByUser(StarlarkDebuggingProtos.PauseReason reason) {
     switch (reason) {
       case STEPPING:
       case PAUSE_THREAD_REQUEST:
@@ -554,6 +571,8 @@ public class SkylarkDebugProcess extends XDebugProcess {
     return true;
   }
 
+  // Check XLineBreakpointTypeBase for raw use of XBreakpointProperties after #api202.
+  @SuppressWarnings("rawtypes")
   private void handleConditionalBreakpointError(
       XLineBreakpoint<XBreakpointProperties> breakpoint, PausedThread thread) {
     // TODO(brendandouglas): also navigate to the problematic breakpoint

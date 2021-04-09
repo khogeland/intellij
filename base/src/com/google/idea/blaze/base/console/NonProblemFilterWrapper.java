@@ -15,6 +15,7 @@
  */
 package com.google.idea.blaze.base.console;
 
+import com.google.idea.blaze.base.io.AbsolutePathPatcher.AbsolutePathPatcherUtil;
 import com.google.idea.blaze.base.issueparser.NonProblemHyperlinkInfo;
 import com.intellij.execution.filters.Filter;
 import com.intellij.execution.filters.HyperlinkInfo;
@@ -24,9 +25,9 @@ import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 
 /** Wraps up a filter result, identifying it as not to be included in occurrence navigation. */
-final class NonProblemFilterWrapper implements Filter, PossiblyDumbAware {
+public final class NonProblemFilterWrapper implements Filter, PossiblyDumbAware {
 
-  static NonProblemFilterWrapper wrap(Filter delegate) {
+  public static NonProblemFilterWrapper wrap(Filter delegate) {
     return new NonProblemFilterWrapper(delegate);
   }
 
@@ -39,6 +40,10 @@ final class NonProblemFilterWrapper implements Filter, PossiblyDumbAware {
   @Nullable
   @Override
   public Result applyFilter(String line, int entireLength) {
+    // Blaze error message uses absolute path for BUILD files. If it's not processed by
+    // IssueOutputFilter, it will be processed here. Since we cannot modify how delegate filters
+    // process hyper info, update line string before pass it to filter.
+    line = AbsolutePathPatcherUtil.fixAllPaths(line);
     Result result = delegate.applyFilter(line, entireLength);
     return result != null ? wrapResult(result) : null;
   }

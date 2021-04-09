@@ -18,12 +18,9 @@ package com.google.idea.blaze.python.sync;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.ImmutableSetMultimap;
 import com.google.devtools.intellij.ideinfo.IntellijIdeInfo.PyIdeInfo.PythonVersion;
 import com.google.idea.blaze.base.ideinfo.PyIdeInfo;
 import com.google.idea.blaze.base.ideinfo.TargetIdeInfo;
-import com.google.idea.blaze.base.io.VfsUtils;
-import com.google.idea.blaze.base.io.VirtualFileSystemProvider;
 import com.google.idea.blaze.base.model.BlazeProjectData;
 import com.google.idea.blaze.base.model.BlazeVersionData;
 import com.google.idea.blaze.base.model.primitives.LanguageClass;
@@ -42,11 +39,9 @@ import com.google.idea.blaze.base.scope.output.IssueOutput;
 import com.google.idea.blaze.base.sync.BlazeSyncManager;
 import com.google.idea.blaze.base.sync.BlazeSyncPlugin;
 import com.google.idea.blaze.base.sync.GenericSourceFolderProvider;
-import com.google.idea.blaze.base.sync.RefreshRequestType;
 import com.google.idea.blaze.base.sync.SourceFolderProvider;
 import com.google.idea.blaze.base.sync.projectview.WorkspaceLanguageSettings;
-import com.google.idea.common.experiments.BoolExperiment;
-import com.google.idea.common.transactions.Transactions;
+import com.google.idea.common.util.Transactions;
 import com.intellij.facet.Facet;
 import com.intellij.facet.FacetManager;
 import com.intellij.facet.ModifiableFacetModel;
@@ -59,14 +54,13 @@ import com.intellij.openapi.roots.ProjectRootManager;
 import com.intellij.openapi.roots.libraries.Library;
 import com.intellij.openapi.roots.libraries.LibraryTablesRegistrar;
 import com.intellij.openapi.ui.Messages;
-import com.intellij.openapi.vfs.LocalFileSystem;
-import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.pom.NavigatableAdapter;
 import com.intellij.util.PlatformUtils;
 import com.jetbrains.python.PythonModuleTypeBase;
 import com.jetbrains.python.facet.LibraryContributingFacet;
 import com.jetbrains.python.facet.PythonFacetSettings;
 import com.jetbrains.python.sdk.PythonSdkType;
+import com.jetbrains.python.sdk.PythonSdkUtil;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -81,8 +75,6 @@ public class BlazePythonSyncPlugin implements BlazeSyncPlugin {
   // compatible with a group of targets.
   private static final ImmutableList<PythonVersion> DEFAULT_PYTHON_VERSIONS =
       ImmutableList.of(PythonVersion.PY3, PythonVersion.PY2);
-  private static final BoolExperiment refreshExecRoot =
-      new BoolExperiment("refresh.exec.root.python", true);
 
   @Override
   public Set<LanguageClass> getSupportedLanguagesInWorkspace(WorkspaceType workspaceType) {
@@ -97,7 +89,7 @@ public class BlazePythonSyncPlugin implements BlazeSyncPlugin {
 
   @Nullable
   @Override
-  public ModuleType getWorkspaceModuleType(WorkspaceType workspaceType) {
+  public ModuleType<?> getWorkspaceModuleType(WorkspaceType workspaceType) {
     if (workspaceType == WorkspaceType.PYTHON && supportsPythonWorkspaceType()) {
       return PythonModuleTypeBase.getInstance();
     }
@@ -146,28 +138,8 @@ public class BlazePythonSyncPlugin implements BlazeSyncPlugin {
   }
 
   @Override
-  public ImmutableSetMultimap<RefreshRequestType, VirtualFile> filesToRefresh(
-      BlazeProjectData blazeProjectData) {
-    if (!blazeProjectData.getWorkspaceLanguageSettings().isLanguageActive(LanguageClass.PYTHON)) {
-      return ImmutableSetMultimap.of();
-    }
-    if (!refreshExecRoot.getValue()) {
-      return ImmutableSetMultimap.of();
-    }
-    // recursive refresh of the blaze execution root. This is required because our blaze aspect
-    // can't yet tell us exactly which genfiles are required to resolve the project.
-    File file = blazeProjectData.getBlazeInfo().getExecutionRoot();
-    VirtualFile execRoot = VfsUtils.resolveVirtualFile(file);
-    if (execRoot == null) {
-      // force-refresh the exec root
-      LocalFileSystem fileSystem = VirtualFileSystemProvider.getInstance().getSystem();
-      execRoot = fileSystem.refreshAndFindFileByIoFile(file);
-    }
-    if (execRoot == null) {
-      return ImmutableSetMultimap.of();
-    }
-    return ImmutableSetMultimap.of(
-        RefreshRequestType.create(/* recursive= */ true, /* reloadChildren= */ true), execRoot);
+  public boolean refreshExecutionRoot(BlazeProjectData blazeProjectData) {
+    return blazeProjectData.getWorkspaceLanguageSettings().isLanguageActive(LanguageClass.PYTHON);
   }
 
   private static void updatePythonFacet(
@@ -263,7 +235,7 @@ public class BlazePythonSyncPlugin implements BlazeSyncPlugin {
     }
     // facets aren't properly updated when SDKs change (e.g. when they're deleted), so we need to
     // manually check against the full list.
-    if (!PythonSdkType.getAllSdks().contains(sdk)) {
+    if (!PythonSdkUtil.getAllSdks().contains(sdk)) {
       return false;
     }
 

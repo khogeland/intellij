@@ -34,8 +34,9 @@ import com.google.idea.blaze.java.fastbuild.FastBuildBlazeData.JavaInfo;
 import com.google.idea.blaze.java.fastbuild.FastBuildCompiler.CompileInstructions;
 import com.google.idea.blaze.java.fastbuild.FastBuildLogDataScope.FastBuildLogOutput;
 import com.google.idea.blaze.java.fastbuild.FastBuildState.BuildOutput;
-import com.google.idea.common.concurrency.ConcurrencyUtil;
+import com.google.idea.common.util.ConcurrencyUtil;
 import com.intellij.execution.ui.ConsoleViewContentType;
+import com.intellij.openapi.project.Project;
 import java.io.File;
 import java.io.Writer;
 import java.util.HashSet;
@@ -49,13 +50,10 @@ final class FastBuildIncrementalCompilerImpl implements FastBuildIncrementalComp
   private final FastBuildCompilerFactory compilerFactory;
   private final BlazeConsoleService blazeConsoleService;
 
-  FastBuildIncrementalCompilerImpl(
-      BlazeProjectDataManager projectDataManager,
-      FastBuildCompilerFactory compilerFactory,
-      BlazeConsoleService blazeConsoleService) {
-    this.projectDataManager = projectDataManager;
-    this.compilerFactory = compilerFactory;
-    this.blazeConsoleService = blazeConsoleService;
+  FastBuildIncrementalCompilerImpl(Project project) {
+    this.projectDataManager = BlazeProjectDataManager.getInstance(project);
+    this.compilerFactory = FastBuildCompilerFactory.getInstance(project);
+    this.blazeConsoleService = BlazeConsoleService.getInstance(project);
   }
 
   @Override

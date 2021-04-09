@@ -37,7 +37,7 @@ import java.util.Collection;
 import javax.annotation.Nullable;
 import org.jetbrains.plugins.scala.lang.psi.api.ScalaFile;
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef.ScObject;
-import org.jetbrains.plugins.scala.runner.ScalaMainMethodUtil;
+import org.jetbrains.plugins.scala.util.ScalaMainMethodUtil;
 import scala.Option;
 
 /** Creates run configurations for Scala main classes sourced by scala_binary targets. */
@@ -63,7 +63,7 @@ class ScalaBinaryContextProvider implements BinaryContextProvider {
 
   @Nullable
   static ScObject getMainObject(ConfigurationContext context) {
-    Location location = context.getLocation();
+    Location<?> location = context.getLocation();
     if (location == null) {
       return null;
     }
@@ -174,7 +174,7 @@ class ScalaBinaryContextProvider implements BinaryContextProvider {
         projectData.getTargetMap(),
         target ->
             target.isPlainTarget()
-                && target.getKind().getLanguageClass().equals(LanguageClass.SCALA)
+                && target.getKind().hasLanguage(LanguageClass.SCALA)
                 && target.getKind().getRuleType().equals(RuleType.BINARY));
   }
 }

@@ -5,6 +5,13 @@
 #   plugin apis to known packages that build plugins. Only packages
 #   listed here may depend on these libraries.
 
+load(
+    ":build_defs.bzl",
+    "select_for_ide",
+    "select_for_plugin_api",
+    "select_from_plugin_api_directory",
+)
+
 licenses(["notice"])  # Apache2
 
 package(default_visibility = ["//visibility:public"])
@@ -68,62 +75,92 @@ config_setting(
 )
 
 config_setting(
-    name = "intellij-2019.2",
+    name = "intellij-2020.1",
     values = {
-        "define": "ij_product=intellij-2019.2",
+        "define": "ij_product=intellij-2020.1",
     },
 )
 
 config_setting(
-    name = "intellij-2019.2-mac",
+    name = "intellij-2020.1-mac",
     values = {
         "cpu": "darwin_x86_64",
-        "define": "ij_product=intellij-2019.2",
+        "define": "ij_product=intellij-2020.1",
     },
 )
 
 config_setting(
-    name = "intellij-2019.3",
+    name = "intellij-2020.2",
     values = {
-        "define": "ij_product=intellij-2019.3",
+        "define": "ij_product=intellij-2020.2",
     },
 )
 
 config_setting(
-    name = "intellij-2019.3-mac",
-    values = {
-        "cpu": "darwin_x86_64",
-        "define": "ij_product=intellij-2019.3",
-    },
-)
-
-config_setting(
-    name = "intellij-ue-2019.2",
-    values = {
-        "define": "ij_product=intellij-ue-2019.2",
-    },
-)
-
-config_setting(
-    name = "intellij-ue-2019.2-mac",
+    name = "intellij-2020.2-mac",
     values = {
         "cpu": "darwin_x86_64",
-        "define": "ij_product=intellij-ue-2019.2",
+        "define": "ij_product=intellij-2020.2",
     },
 )
 
 config_setting(
-    name = "intellij-ue-2019.3",
+    name = "intellij-2020.3",
     values = {
-        "define": "ij_product=intellij-ue-2019.3",
+        "define": "ij_product=intellij-2020.3",
     },
 )
 
 config_setting(
-    name = "intellij-ue-2019.3-mac",
+    name = "intellij-2020.3-mac",
     values = {
         "cpu": "darwin_x86_64",
-        "define": "ij_product=intellij-ue-2019.3",
+        "define": "ij_product=intellij-2020.3",
+    },
+)
+
+config_setting(
+    name = "intellij-ue-2020.1",
+    values = {
+        "define": "ij_product=intellij-ue-2020.1",
+    },
+)
+
+config_setting(
+    name = "intellij-ue-2020.1-mac",
+    values = {
+        "cpu": "darwin_x86_64",
+        "define": "ij_product=intellij-ue-2020.1",
+    },
+)
+
+config_setting(
+    name = "intellij-ue-2020.2",
+    values = {
+        "define": "ij_product=intellij-ue-2020.2",
+    },
+)
+
+config_setting(
+    name = "intellij-ue-2020.2-mac",
+    values = {
+        "cpu": "darwin_x86_64",
+        "define": "ij_product=intellij-ue-2020.2",
+    },
+)
+
+config_setting(
+    name = "intellij-ue-2020.3",
+    values = {
+        "define": "ij_product=intellij-ue-2020.3",
+    },
+)
+
+config_setting(
+    name = "intellij-ue-2020.3-mac",
+    values = {
+        "cpu": "darwin_x86_64",
+        "define": "ij_product=intellij-ue-2020.3",
     },
 )
 
@@ -157,39 +194,24 @@ config_setting(
 )
 
 config_setting(
-    name = "android-studio-3.6",
+    name = "android-studio-4.2",
     values = {
-        "define": "ij_product=android-studio-3.6",
+        "define": "ij_product=android-studio-4.2",
     },
 )
 
 config_setting(
-    name = "android-studio-3.5",
-    values = {
-        "define": "ij_product=android-studio-3.5",
-    },
-)
-
-config_setting(
-    name = "android-studio-3.5-mac",
+    name = "android-studio-4.2-mac",
     values = {
         "cpu": "darwin_x86_64",
-        "define": "ij_product=android-studio-3.5",
+        "define": "ij_product=android-studio-4.2",
     },
 )
 
 config_setting(
-    name = "android-studio-3.6-mac",
+    name = "android-studio-2020.3",
     values = {
-        "cpu": "darwin_x86_64",
-        "define": "ij_product=android-studio-3.6",
-    },
-)
-
-config_setting(
-    name = "android-studio-4.0",
-    values = {
-        "define": "ij_product=android-studio-4.0",
+        "define": "ij_product=android-studio-2020.3",
     },
 )
 
@@ -216,24 +238,48 @@ config_setting(
 )
 
 config_setting(
-    name = "clion-2019.2",
+    name = "clion-2020.1",
     values = {
-        "define": "ij_product=clion-2019.2",
+        "define": "ij_product=clion-2020.1",
     },
 )
 
 config_setting(
-    name = "clion-2019.3",
+    name = "clion-2020.1-mac",
     values = {
-        "define": "ij_product=clion-2019.3",
+        "cpu": "darwin_x86_64",
+        "define": "ij_product=clion-2020.1",
     },
 )
 
-load(
-    ":build_defs.bzl",
-    "select_for_ide",
-    "select_for_plugin_api",
-    "select_from_plugin_api_directory",
+config_setting(
+    name = "clion-2020.2",
+    values = {
+        "define": "ij_product=clion-2020.2",
+    },
+)
+
+config_setting(
+    name = "clion-2020.2-mac",
+    values = {
+        "cpu": "darwin_x86_64",
+        "define": "ij_product=clion-2020.2",
+    },
+)
+
+config_setting(
+    name = "clion-2020.3",
+    values = {
+        "define": "ij_product=clion-2020.3",
+    },
+)
+
+config_setting(
+    name = "clion-2020.3-mac",
+    values = {
+        "cpu": "darwin_x86_64",
+        "define": "ij_product=clion-2020.3",
+    },
 )
 
 # The purpose of this rule is to hide the versioning
@@ -245,11 +291,20 @@ java_library(
     exports = select_from_plugin_api_directory(
         android_studio = [
             ":sdk",
-            ":android_plugin",
+            ":java",
+            ":android",
             ":test_recorder",
+            ":platform_images",
         ],
-        clion = [":sdk"],
-        intellij = [":sdk"],
+        clion = [
+            ":sdk",
+            ":clion_plugins",
+        ],
+        intellij = [
+            ":sdk",
+            ":java",
+            ":platform_images",
+        ],
     ),
 )
 
@@ -264,6 +319,13 @@ java_library(
 java_library(
     name = "plugin_api_for_tests",
     testonly = 1,
+    data = select_from_plugin_api_directory(
+        android_studio = [
+            ":layoutlib_data",
+        ],
+        clion = [],
+        intellij = [],
+    ),
     exports = [":plugin_api_internal"],
 )
 
@@ -291,19 +353,10 @@ java_library(
     visibility = [":test_libs_visibility"],
     exports = [
         "//third_party:truth",
+        "@bytebuddy-agent//jar",
+        "@bytebuddy//jar",
         "@mockito//jar",
-        "@objenesis//jar",
     ],
-)
-
-# The UI designer requires forms_rt.jar in the classpath.
-java_library(
-    name = "forms_rt",
-    exports = select_from_plugin_api_directory(
-        android_studio = [":forms_rt"],
-        clion = [":forms_rt"],
-        intellij = [":forms_rt"],
-    ),
 )
 
 # The version of guava bundled with the IntelliJ plugin API.
@@ -332,12 +385,32 @@ java_library(
 java_library(
     name = "jsr305",
     exports = select_for_plugin_api({
-        "clion-2019.2": ["@jsr305_annotations//jar"],
-        "clion-2019.3": ["@jsr305_annotations//jar"],
-        "intellij-ue-2019.2": ["@jsr305_annotations//jar"],
-        "intellij-ue-2019.3": ["@jsr305_annotations//jar"],
-        "default": [":plugin_api"],
+        "clion-2020.1": [":bundled_jsr305"],
+        "clion-2020.2": [":bundled_jsr305"],
+        "clion-2020.3": [":bundled_jsr305"],
+        "intellij-2020.1": [":bundled_jsr305"],
+        "intellij-2020.2": [":bundled_jsr305"],
+        "intellij-2020.3": [":bundled_jsr305"],
+        "intellij-ue-2020.1": ["@jsr305_annotations//jar"],
+        "intellij-ue-2020.2": ["@jsr305_annotations//jar"],
+        "intellij-ue-2020.3": [":bundled_jsr305"],
+        "android-studio-4.2": ["@jsr305_annotations//jar"],
+        "android-studio-2020.3": ["@jsr305_annotations//jar"],
+        # We default to intellij-latest when no plugin api is selected.
+        "default": [":bundled_jsr305"],
     }),
+)
+
+# The version of jsr305 bundled with the IntelliJ plugin API.
+java_library(
+    name = "bundled_jsr305",
+    neverlink = 1,
+    visibility = ["//visibility:private"],
+    exports = select_from_plugin_api_directory(
+        android_studio = [":jsr305"],
+        clion = [":jsr305"],
+        intellij = [":jsr305"],
+    ),
 )
 
 # The version of truth bundled with the IntelliJ plugin API.

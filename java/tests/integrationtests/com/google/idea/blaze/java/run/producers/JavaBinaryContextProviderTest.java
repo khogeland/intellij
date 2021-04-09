@@ -25,7 +25,7 @@ import com.google.idea.blaze.base.model.MockBlazeProjectDataManager;
 import com.google.idea.blaze.base.model.primitives.TargetExpression;
 import com.google.idea.blaze.base.model.primitives.WorkspacePath;
 import com.google.idea.blaze.base.run.BlazeRunConfiguration;
-import com.google.idea.blaze.base.run.producer.BlazeRunConfigurationProducerTestCase;
+import com.google.idea.blaze.base.run.producers.BlazeRunConfigurationProducerTestCase;
 import com.google.idea.blaze.base.sync.data.BlazeProjectDataManager;
 import com.intellij.execution.configurations.RunConfiguration;
 import com.intellij.psi.PsiFile;
@@ -38,7 +38,7 @@ import org.junit.runners.JUnit4;
 public class JavaBinaryContextProviderTest extends BlazeRunConfigurationProducerTestCase {
 
   @Test
-  public void testUniqueJavaBinaryChosen() {
+  public void testUniqueJavaBinaryChosen() throws Throwable {
     MockBlazeProjectDataBuilder builder = MockBlazeProjectDataBuilder.builder(workspaceRoot);
     builder.setTargetMap(
         TargetMapBuilder.builder()
@@ -65,12 +65,12 @@ public class JavaBinaryContextProviderTest extends BlazeRunConfigurationProducer
 
     assertThat(config).isInstanceOf(BlazeRunConfiguration.class);
     BlazeRunConfiguration blazeConfig = (BlazeRunConfiguration) config;
-    assertThat(blazeConfig.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//com/google/binary:UnrelatedName"));
+    assertThat(blazeConfig.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//com/google/binary:UnrelatedName"));
   }
 
   @Test
-  public void testNoJavaBinaryChosenIfNotInRDeps() {
+  public void testNoJavaBinaryChosenIfNotInRDeps() throws Throwable {
     MockBlazeProjectDataBuilder builder = MockBlazeProjectDataBuilder.builder(workspaceRoot);
     builder.setTargetMap(
         TargetMapBuilder.builder()
@@ -98,7 +98,7 @@ public class JavaBinaryContextProviderTest extends BlazeRunConfigurationProducer
   }
 
   @Test
-  public void testNoResultForClassWithoutMainMethod() {
+  public void testNoResultForClassWithoutMainMethod() throws Throwable {
     MockBlazeProjectDataBuilder builder = MockBlazeProjectDataBuilder.builder(workspaceRoot);
     builder.setTargetMap(
         TargetMapBuilder.builder()
@@ -123,7 +123,7 @@ public class JavaBinaryContextProviderTest extends BlazeRunConfigurationProducer
   }
 
   @Test
-  public void testJavaBinaryWithMatchingNameChosen() {
+  public void testJavaBinaryWithMatchingNameChosen() throws Throwable {
     MockBlazeProjectDataBuilder builder = MockBlazeProjectDataBuilder.builder(workspaceRoot);
     builder.setTargetMap(
         TargetMapBuilder.builder()
@@ -155,12 +155,12 @@ public class JavaBinaryContextProviderTest extends BlazeRunConfigurationProducer
     RunConfiguration config = createConfigurationFromLocation(javaClass);
     assertThat(config).isInstanceOf(BlazeRunConfiguration.class);
     BlazeRunConfiguration blazeConfig = (BlazeRunConfiguration) config;
-    assertThat(blazeConfig.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//com/google/binary:MainClass"));
+    assertThat(blazeConfig.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//com/google/binary:MainClass"));
   }
 
   @Test
-  public void testJavaBinaryWithMatchingMainClassChosen() {
+  public void testJavaBinaryWithMatchingMainClassChosen() throws Throwable {
     MockBlazeProjectDataBuilder builder = MockBlazeProjectDataBuilder.builder(workspaceRoot);
     builder.setTargetMap(
         TargetMapBuilder.builder()
@@ -194,7 +194,7 @@ public class JavaBinaryContextProviderTest extends BlazeRunConfigurationProducer
 
     assertThat(config).isInstanceOf(BlazeRunConfiguration.class);
     BlazeRunConfiguration blazeConfig = (BlazeRunConfiguration) config;
-    assertThat(blazeConfig.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//com/google/binary:OtherName"));
+    assertThat(blazeConfig.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//com/google/binary:OtherName"));
   }
 }

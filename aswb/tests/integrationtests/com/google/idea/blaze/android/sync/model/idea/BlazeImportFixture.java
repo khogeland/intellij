@@ -122,7 +122,8 @@ public final class BlazeImportFixture {
             getBlazeImportInput().createSourceFilter(),
             new MockJdepsMap(),
             null,
-            getDecoder());
+            getDecoder(),
+            getSyncState());
     return blazeWorkspaceImporter.importWorkspace(getContext());
   }
 
@@ -272,11 +273,7 @@ public final class BlazeImportFixture {
                         .addResource(
                             AndroidResFolder.builder()
                                 .setRoot(source("third_party/quantum/res"))
-                                .addResources(
-                                    ImmutableList.of(
-                                        "values/strings.xml",
-                                        "values/attrs.xml",
-                                        "layout/menu.xml"))
+                                .setAar(source("third_party/quantum/values.aar"))
                                 .build())
                         .setGenerateResourceClass(true)
                         .setResourceJavaPackage("third_party.quantum")))
@@ -290,7 +287,9 @@ public final class BlazeImportFixture {
                 .setLabel(aarFile)
                 .setBuildFile(source("third_party/aar/BUILD"))
                 .setKind(AndroidBlazeRules.RuleTypes.AAR_IMPORT.getKind())
-                .setAndroidAarInfo(new AndroidAarIdeInfo(source("third_party/aar/lib_aar.aar")))
+                .setAndroidAarInfo(
+                    new AndroidAarIdeInfo(
+                        source("third_party/aar/lib_aar.aar"), /*customJavaPackage=*/ null))
                 .setJavaInfo(
                     javaInfoWithJars("third_party/aar/_aar/an_aar/classes_and_libs_merged.jar"))
                 .build())

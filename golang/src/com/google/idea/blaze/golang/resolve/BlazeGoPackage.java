@@ -187,7 +187,7 @@ public class BlazeGoPackage extends GoPackage {
     TargetMap targetMap = projectData.getTargetMap();
     ImmutableMultimap.Builder<Label, GoIdeInfo> builder = ImmutableMultimap.builder();
     for (TargetIdeInfo target : targetMap.targets()) {
-      if (target.getKind().getLanguageClass() != LanguageClass.GO
+      if (!target.getKind().hasLanguage(LanguageClass.GO)
           || target.getKind().getRuleType() != RuleType.TEST
           || target.getGoIdeInfo() == null
           || target.getGoIdeInfo().getLibraryLabels().isEmpty()) {
@@ -241,7 +241,7 @@ public class BlazeGoPackage extends GoPackage {
   private static String getPackageName(Project project, Collection<File> files, String importPath) {
     PsiManager psiManager = PsiManager.getInstance(project);
     return files.stream()
-        .map(VfsUtils::resolveVirtualFile)
+        .map(file -> VfsUtils.resolveVirtualFile(file, /* refreshIfNeeded= */ false))
         .filter(Objects::nonNull)
         .map(psiManager::findFile)
         .filter(GoFile.class::isInstance)

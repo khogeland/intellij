@@ -24,7 +24,6 @@ import com.google.idea.blaze.base.ideinfo.ProtoWrapper;
 import com.google.idea.blaze.base.ideinfo.TargetKey;
 import com.google.idea.blaze.base.model.primitives.Label;
 import java.util.Collection;
-import java.util.List;
 import java.util.Set;
 import javax.annotation.concurrent.Immutable;
 import org.jetbrains.annotations.NotNull;
@@ -41,18 +40,24 @@ public final class AndroidResourceModule
   public final ImmutableList<ArtifactLocation> transitiveResources;
   public final ImmutableList<String> resourceLibraryKeys;
   public final ImmutableList<TargetKey> transitiveResourceDependencies;
+  // tracks all target keys that contributed to the AndroidResourceModule (including targetKey).
+  // If merging AndroidResourceModules is off, then this only contains `targetKey`. Otherwise
+  // contains the list of targets merged to make this module.
+  public final ImmutableList<TargetKey> sourceTargetKeys;
 
-  public AndroidResourceModule(
+  private AndroidResourceModule(
       TargetKey targetKey,
       ImmutableList<ArtifactLocation> resources,
       ImmutableList<ArtifactLocation> transitiveResources,
       ImmutableList<String> resourceLibraryKeys,
-      ImmutableList<TargetKey> transitiveResourceDependencies) {
+      ImmutableList<TargetKey> transitiveResourceDependencies,
+      ImmutableList<TargetKey> sourceTargetKeys) {
     this.targetKey = targetKey;
     this.resources = resources;
     this.transitiveResources = transitiveResources;
     this.resourceLibraryKeys = resourceLibraryKeys;
     this.transitiveResourceDependencies = transitiveResourceDependencies;
+    this.sourceTargetKeys = sourceTargetKeys;
   }
 
   static AndroidResourceModule fromProto(ProjectData.AndroidResourceModule proto) {
@@ -61,7 +66,8 @@ public final class AndroidResourceModule
         ProtoWrapper.map(proto.getResourcesList(), ArtifactLocation::fromProto),
         ProtoWrapper.map(proto.getTransitiveResourcesList(), ArtifactLocation::fromProto),
         ImmutableList.copyOf(proto.getResourceLibraryKeysList()),
-        ProtoWrapper.map(proto.getTransitiveResourceDependenciesList(), TargetKey::fromProto));
+        ProtoWrapper.map(proto.getTransitiveResourceDependenciesList(), TargetKey::fromProto),
+        ProtoWrapper.map(proto.getSourceTargetKeysList(), TargetKey::fromProto));
   }
 
   @Override
@@ -73,6 +79,7 @@ public final class AndroidResourceModule
         .addAllResourceLibraryKeys(resourceLibraryKeys)
         .addAllTransitiveResourceDependencies(
             ProtoWrapper.mapToProtos(transitiveResourceDependencies))
+        .addAllSourceTargetKeys(ProtoWrapper.mapToProtos(sourceTargetKeys))
         .build();
   }
 
@@ -84,8 +91,8 @@ public final class AndroidResourceModule
           && Objects.equal(this.resources, that.resources)
           && Objects.equal(this.transitiveResources, that.transitiveResources)
           && Objects.equal(this.resourceLibraryKeys, that.resourceLibraryKeys)
-          && Objects.equal(
-              this.transitiveResourceDependencies, that.transitiveResourceDependencies);
+          && Objects.equal(this.transitiveResourceDependencies, that.transitiveResourceDependencies)
+          && Objects.equal(this.sourceTargetKeys, that.sourceTargetKeys);
     }
     return false;
   }
@@ -97,7 +104,8 @@ public final class AndroidResourceModule
         this.resources,
         this.transitiveResources,
         this.resourceLibraryKeys,
-        this.transitiveResourceDependencies);
+        this.transitiveResourceDependencies,
+        this.sourceTargetKeys);
   }
 
   @Override
@@ -119,11 +127,14 @@ public final class AndroidResourceModule
         + "  transitiveResourceDependencies: "
         + transitiveResourceDependencies
         + "\n"
+        + "sourceTargetKeys: "
+        + sourceTargetKeys
+        + "\n"
         + '}';
   }
 
   public static Builder builder(TargetKey targetKey) {
-    return new Builder(targetKey);
+    return new Builder(targetKey).addSourceTarget(targetKey);
   }
 
   public boolean isEmpty() {
@@ -136,10 +147,12 @@ public final class AndroidResourceModule
     private final Set<ArtifactLocation> resources = Sets.newHashSet();
     private final Set<ArtifactLocation> transitiveResources = Sets.newHashSet();
     private final Set<String> resourceLibraryKeys = Sets.newHashSet();
-    private Set<TargetKey> transitiveResourceDependencies = Sets.newHashSet();
+    private final Set<TargetKey> transitiveResourceDependencies = Sets.newHashSet();
+    private final Set<TargetKey> sourceTargetKeys = Sets.newHashSet();
 
     public Builder(TargetKey targetKey) {
       this.targetKey = targetKey;
+      this.sourceTargetKeys.add(targetKey);
     }
 
     public Builder addResource(ArtifactLocation resource) {
@@ -147,7 +160,7 @@ public final class AndroidResourceModule
       return this;
     }
 
-    public Builder addAllResources(List<ArtifactLocation> resources) {
+    public Builder addResources(Collection<ArtifactLocation> resources) {
       this.resources.addAll(resources);
       return this;
     }
@@ -209,6 +222,16 @@ public final class AndroidResourceModule
       return addTransitiveResourceDependency(Label.create(dependency));
     }
 
+    public Builder addSourceTarget(TargetKey target) {
+      this.sourceTargetKeys.add(target);
+      return this;
+    }
+
+    public Builder addSourceTargets(Collection<TargetKey> targetKeys) {
+      this.sourceTargetKeys.addAll(targetKeys);
+      return this;
+    }
+
     public Set<TargetKey> getTransitiveResourceDependencies() {
       return this.transitiveResourceDependencies;
     }
@@ -220,7 +243,8 @@ public final class AndroidResourceModule
           ImmutableList.sortedCopyOf(resources),
           ImmutableList.sortedCopyOf(transitiveResources),
           ImmutableList.sortedCopyOf(resourceLibraryKeys),
-          ImmutableList.sortedCopyOf(transitiveResourceDependencies));
+          ImmutableList.sortedCopyOf(transitiveResourceDependencies),
+          ImmutableList.sortedCopyOf(sourceTargetKeys));
     }
   }
 }

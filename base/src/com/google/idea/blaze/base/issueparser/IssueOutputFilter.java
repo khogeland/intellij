@@ -19,6 +19,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.idea.blaze.base.command.BlazeInvocationContext;
 import com.google.idea.blaze.base.console.BlazeConsoleToolWindowFactory;
 import com.google.idea.blaze.base.console.BlazeConsoleView;
+import com.google.idea.blaze.base.io.AbsolutePathPatcher.AbsolutePathPatcherUtil;
 import com.google.idea.blaze.base.io.VfsUtils;
 import com.google.idea.blaze.base.issueparser.BlazeIssueParser.Parser;
 import com.google.idea.blaze.base.model.primitives.WorkspaceRoot;
@@ -137,7 +138,7 @@ public class IssueOutputFilter implements Filter {
     if (file == null) {
       return null;
     }
-    VirtualFile vf = VfsUtils.resolveVirtualFile(file);
+    VirtualFile vf = VfsUtils.resolveVirtualFile(file, /* refreshIfNeeded= */ true);
     return vf != null ? resolveSymlinks(vf) : null;
   }
 
@@ -146,7 +147,8 @@ public class IssueOutputFilter implements Filter {
    * virtual file if unsuccessful.
    */
   private static VirtualFile resolveSymlinks(VirtualFile file) {
-    VirtualFile resolved = file.getCanonicalFile();
+    VirtualFile resolved =
+        AbsolutePathPatcherUtil.fixPath(file.getCanonicalFile(), /* refreshIfNeeded= */ false);
     return resolved != null ? resolved : file;
   }
 

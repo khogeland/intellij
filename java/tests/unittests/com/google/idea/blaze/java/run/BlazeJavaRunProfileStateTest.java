@@ -23,11 +23,15 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Futures;
 import com.google.idea.blaze.base.BlazeTestCase;
 import com.google.idea.blaze.base.bazel.BuildSystemProvider;
+import com.google.idea.blaze.base.command.BlazeCommand;
 import com.google.idea.blaze.base.command.BlazeCommandName;
 import com.google.idea.blaze.base.command.BlazeFlags;
 import com.google.idea.blaze.base.command.BuildFlagsProvider;
 import com.google.idea.blaze.base.dependencies.TargetInfo;
 import com.google.idea.blaze.base.ideinfo.TargetIdeInfo;
+import com.google.idea.blaze.base.io.FileOperationProvider;
+import com.google.idea.blaze.base.io.TempDirectoryProvider;
+import com.google.idea.blaze.base.io.TempDirectoryProviderImpl;
 import com.google.idea.blaze.base.model.primitives.GenericBlazeRules;
 import com.google.idea.blaze.base.model.primitives.Kind;
 import com.google.idea.blaze.base.model.primitives.Label;
@@ -49,11 +53,14 @@ import com.google.idea.blaze.base.sync.workspace.WorkspacePathResolver;
 import com.google.idea.blaze.java.JavaBlazeRules;
 import com.google.idea.blaze.java.fastbuild.FastBuildInfo;
 import com.google.idea.blaze.java.fastbuild.FastBuildService;
+import com.google.idea.blaze.java.run.hotswap.HotSwapCommandBuilder;
 import com.google.idea.blaze.java.sync.source.JavaLikeLanguage;
 import com.google.idea.common.experiments.ExperimentService;
 import com.google.idea.common.experiments.MockExperimentService;
 import com.intellij.openapi.extensions.impl.ExtensionPointImpl;
 import com.intellij.openapi.project.Project;
+import java.nio.file.Path;
+import java.nio.file.attribute.FileAttribute;
 import java.util.List;
 import java.util.concurrent.Future;
 import javax.annotation.Nullable;
@@ -79,11 +86,13 @@ public class BlazeJavaRunProfileStateTest extends BlazeTestCase {
     ExperimentService experimentService = new MockExperimentService();
     applicationServices.register(ExperimentService.class, experimentService);
     applicationServices.register(BlazeUserSettings.class, new BlazeUserSettings());
+    applicationServices.register(TempDirectoryProvider.class, new TempDirectoryProviderImpl());
+    applicationServices.register(FileOperationProvider.class, new FakeFileOperationProvider());
 
-    ExtensionPointImpl<Kind.Provider> ep =
+    ExtensionPointImpl<Kind.Provider> kindProviderEp =
         registerExtensionPoint(Kind.Provider.EP_NAME, Kind.Provider.class);
-    ep.registerExtension(new GenericBlazeRules());
-    ep.registerExtension(new JavaBlazeRules());
+    kindProviderEp.registerExtension(new GenericBlazeRules(), testDisposable);
+    kindProviderEp.registerExtension(new JavaBlazeRules(), testDisposable);
     applicationServices.register(Kind.ApplicationState.class, new Kind.ApplicationState());
 
     projectServices.register(FastBuildService.class, new DisabledFastBuildService());
@@ -91,24 +100,30 @@ public class BlazeJavaRunProfileStateTest extends BlazeTestCase {
 
     ExtensionPointImpl<TargetFinder> targetFinderEp =
         registerExtensionPoint(TargetFinder.EP_NAME, TargetFinder.class);
-    targetFinderEp.registerExtension(new MockTargetFinder());
+    targetFinderEp.registerExtension(new MockTargetFinder(), testDisposable);
 
     ExtensionPointImpl<JavaLikeLanguage> javaLikeEp =
         registerExtensionPoint(JavaLikeLanguage.EP_NAME, JavaLikeLanguage.class);
-    javaLikeEp.registerExtension(new JavaLikeLanguage.Java());
+    javaLikeEp.registerExtension(new JavaLikeLanguage.Java(), testDisposable);
 
     registerExtensionPoint(BuildFlagsProvider.EP_NAME, BuildFlagsProvider.class);
+
     ExtensionPointImpl<BlazeCommandRunConfigurationHandlerProvider> handlerProviderEp =
         registerExtensionPoint(
             BlazeCommandRunConfigurationHandlerProvider.EP_NAME,
             BlazeCommandRunConfigurationHandlerProvider.class);
-    handlerProviderEp.registerExtension(new BlazeJavaRunConfigurationHandlerProvider());
-    handlerProviderEp.registerExtension(new BlazeCommandGenericRunConfigurationHandlerProvider());
-    ExtensionPointImpl<BuildSystemProvider> buildSystemProviderExtensionPoint =
+    handlerProviderEp.registerExtension(
+        new BlazeJavaRunConfigurationHandlerProvider(), testDisposable);
+    handlerProviderEp.registerExtension(
+        new BlazeCommandGenericRunConfigurationHandlerProvider(), testDisposable);
+
+    ExtensionPointImpl<BuildSystemProvider> buildSystemProviderEp =
         registerExtensionPoint(BuildSystemProvider.EP_NAME, BuildSystemProvider.class);
     BuildSystemProvider buildSystemProvider = mock(BuildSystemProvider.class);
     when(buildSystemProvider.getBinaryPath(project)).thenReturn("/usr/bin/blaze");
-    buildSystemProviderExtensionPoint.registerExtension(buildSystemProvider);
+    buildSystemProviderEp.registerExtension(buildSystemProvider, testDisposable);
+
+    registerExtensionPoint(HotSwapCommandBuilder.EP_NAME, HotSwapCommandBuilder.class);
 
     configuration =
         new BlazeCommandRunConfigurationType().getFactory().createTemplateConfiguration(project);
@@ -183,6 +198,27 @@ public class BlazeJavaRunProfileStateTest extends BlazeTestCase {
                 "--wrapper_script_flag=--debug=5005"));
   }
 
+  @Test
+  public void getBashCommandsToRunScript() throws Exception {
+    BlazeCommand.Builder commandBuilder =
+        BlazeCommand.builder("/usr/bin/blaze", BlazeCommandName.BUILD)
+            .addTargets(Label.create("//label:java_binary_rule"));
+    List<String> command =
+        HotSwapCommandBuilder.getBashCommandsToRunScript(getProject(), commandBuilder);
+    Path tempDirectory = TempDirectoryProvider.getInstance().getTempDirectory();
+    assertThat(command)
+        .containsExactly(
+            "/bin/bash",
+            "-c",
+            String.format(
+                "/usr/bin/blaze build %s "
+                    + "--script_path=%s/blaze-script-1337 "
+                    + "-- //label:java_binary_rule "
+                    + "&& %s/blaze-script-1337",
+                BlazeFlags.getToolTagFlag(), tempDirectory, tempDirectory))
+        .inOrder();
+  }
+
   private static class MockTargetFinder implements TargetFinder {
     @Override
     public Future<TargetInfo> findTarget(Project project, Label label) {
@@ -231,5 +267,13 @@ public class BlazeJavaRunProfileStateTest extends BlazeTestCase {
 
     @Override
     public void resetBuild(Label label) {}
+  }
+
+  private static class FakeFileOperationProvider extends FileOperationProvider {
+    @Override
+    public Path createTempFile(
+        Path tempDirectory, String prefix, String suffix, FileAttribute<?>... attributes) {
+      return tempDirectory.resolve(prefix + "1337" + suffix);
+    }
   }
 }

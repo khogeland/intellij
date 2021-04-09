@@ -84,8 +84,14 @@ public class BlazeIntellijPluginConfigurationType implements ConfigurationType {
           }
         };
 
-    protected BlazeIntellijPluginConfigurationFactory(ConfigurationType type) {
+    private BlazeIntellijPluginConfigurationFactory(ConfigurationType type) {
       super(type);
+    }
+
+    @Override
+    public String getId() {
+      // must be left unchanged for backwards compatibility
+      return getName();
     }
 
     @Override
@@ -118,6 +124,8 @@ public class BlazeIntellijPluginConfigurationType implements ConfigurationType {
     }
 
     @Override
+    // Super method uses raw BeforeRunTask. Check super method again after #api202.
+    @SuppressWarnings("rawtypes")
     public void configureBeforeRunTaskDefaults(
         Key<? extends BeforeRunTask> providerID, BeforeRunTask task) {
       task.setEnabled(providerID.equals(BuildPluginBeforeRunTaskProvider.ID));
@@ -150,6 +158,7 @@ public class BlazeIntellijPluginConfigurationType implements ConfigurationType {
       if (vmoptionsFile != null) {
         vmoptions += String.format(" -Djb.vmOptionsFile=\"%s\"", vmoptionsFile);
       }
+      vmoptions += " -Didea.is.internal=true";
       return vmoptions;
     }
   }

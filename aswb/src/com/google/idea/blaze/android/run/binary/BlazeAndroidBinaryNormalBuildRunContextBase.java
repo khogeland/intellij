@@ -15,35 +15,37 @@
  */
 package com.google.idea.blaze.android.run.binary;
 
+import static com.google.idea.blaze.android.run.runner.BlazeAndroidLaunchTasksProvider.NATIVE_DEBUGGING_ENABLED;
+
 import com.android.ddmlib.IDevice;
-import com.android.tools.idea.gradle.util.DynamicAppUtils;
-import com.android.tools.idea.run.ApkFileUnit;
 import com.android.tools.idea.run.ApkInfo;
+import com.android.tools.idea.run.ApkProvider;
 import com.android.tools.idea.run.ApkProvisionException;
 import com.android.tools.idea.run.ApplicationIdProvider;
 import com.android.tools.idea.run.ConsolePrinter;
 import com.android.tools.idea.run.ConsoleProvider;
 import com.android.tools.idea.run.LaunchOptions;
+import com.android.tools.idea.run.activity.DefaultStartActivityFlagsProvider;
+import com.android.tools.idea.run.activity.StartActivityFlagsProvider;
+import com.android.tools.idea.run.editor.AndroidDebugger;
+import com.android.tools.idea.run.editor.AndroidDebuggerState;
+import com.android.tools.idea.run.editor.ProfilerState;
 import com.android.tools.idea.run.tasks.LaunchTask;
-import com.google.common.collect.ImmutableList;
+import com.android.tools.idea.run.tasks.LaunchTasksProvider;
+import com.android.tools.idea.run.util.LaunchStatus;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
-import com.google.idea.blaze.android.run.ApplyChangesCompat;
-import com.google.idea.blaze.android.run.DeployTaskCompat;
-import com.google.idea.blaze.android.run.deployinfo.BlazeApkProvider;
+import com.google.idea.blaze.android.run.deployinfo.BlazeAndroidDeployInfo;
+import com.google.idea.blaze.android.run.deployinfo.BlazeApkProviderService;
 import com.google.idea.blaze.android.run.runner.BlazeAndroidDeviceSelector;
+import com.google.idea.blaze.android.run.runner.BlazeAndroidLaunchTasksProvider;
 import com.google.idea.blaze.android.run.runner.BlazeAndroidRunContext;
 import com.google.idea.blaze.android.run.runner.BlazeApkBuildStep;
-import com.google.idea.blaze.android.run.runner.BlazeApkBuildStepNormalBuild;
-import com.google.idea.blaze.base.model.primitives.Label;
-import com.google.idea.common.experiments.BoolExperiment;
 import com.intellij.execution.ExecutionException;
 import com.intellij.execution.configurations.RunConfiguration;
 import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.openapi.project.Project;
-import java.io.File;
 import java.util.Collection;
-import java.util.List;
-import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import org.jetbrains.android.facet.AndroidFacet;
 import org.jetbrains.annotations.NotNull;
@@ -51,17 +53,14 @@ import org.jetbrains.annotations.NotNull;
 /** Run context for android_binary. */
 public abstract class BlazeAndroidBinaryNormalBuildRunContextBase
     implements BlazeAndroidRunContext {
-  private static final BoolExperiment updateCodeViaJvmti =
-      new BoolExperiment("android.apply.changes", false);
-
   protected final Project project;
   protected final AndroidFacet facet;
   protected final RunConfiguration runConfiguration;
   protected final ExecutionEnvironment env;
   protected final BlazeAndroidBinaryRunConfigurationState configState;
   protected final ConsoleProvider consoleProvider;
-  protected final BlazeApkBuildStepNormalBuild buildStep;
-  protected final BlazeApkProvider apkProvider;
+  protected final BlazeApkBuildStep buildStep;
+  protected final ApkProvider apkProvider;
   protected final ApplicationIdProvider applicationIdProvider;
 
   BlazeAndroidBinaryNormalBuildRunContextBase(
@@ -70,16 +69,15 @@ public abstract class BlazeAndroidBinaryNormalBuildRunContextBase
       RunConfiguration runConfiguration,
       ExecutionEnvironment env,
       BlazeAndroidBinaryRunConfigurationState configState,
-      Label label,
-      ImmutableList<String> blazeFlags) {
+      BlazeApkBuildStep buildStep) {
     this.project = project;
     this.facet = facet;
     this.runConfiguration = runConfiguration;
     this.env = env;
     this.configState = configState;
     this.consoleProvider = new BlazeAndroidBinaryConsoleProvider(project);
-    this.buildStep = new BlazeApkBuildStepNormalBuild(project, label, blazeFlags);
-    this.apkProvider = new BlazeApkProvider(project, buildStep);
+    this.buildStep = buildStep;
+    this.apkProvider = BlazeApkProviderService.getInstance().getApkProvider(project, buildStep);
     this.applicationIdProvider = new BlazeAndroidBinaryApplicationIdProvider(buildStep);
   }
 
@@ -91,6 +89,12 @@ public abstract class BlazeAndroidBinaryNormalBuildRunContextBase
   @Override
   public void augmentLaunchOptions(LaunchOptions.Builder options) {
     options.setDeploy(true).setOpenLogcatAutomatically(configState.showLogcatAutomatically());
+    options.addExtraOptions(
+        ImmutableMap.of(
+            ProfilerState.ANDROID_PROFILER_STATE_ID,
+            configState.getProfilerState(),
+            NATIVE_DEBUGGING_ENABLED,
+            configState.getCommonState().isNativeDebuggingEnabled()));
   }
 
   @Override
@@ -110,51 +114,58 @@ public abstract class BlazeAndroidBinaryNormalBuildRunContextBase
 
   @Nullable
   @Override
-  public ImmutableList<LaunchTask> getDeployTasks(IDevice device, LaunchOptions launchOptions)
-      throws ExecutionException {
-    Collection<ApkInfo> apks;
-    try {
-      apks = apkProvider.getApks(device);
-    } catch (ApkProvisionException e) {
-      throw new ExecutionException(e);
-    }
-
-    if (updateCodeViaJvmti.getValue()) {
-      // Add packages to the deployment, filtering out any dynamic features that are disabled.
-      ImmutableMap.Builder<String, List<File>> packages = ImmutableMap.builder();
-      for (ApkInfo apkInfo : apks) {
-        packages.put(
-            apkInfo.getApplicationId(),
-            getFilteredFeatures(apkInfo, launchOptions.getDisabledDynamicFeatures()));
-      }
-
-      // Set the appropriate action based on which deployment we're doing.
-      if (ApplyChangesCompat.isApplyChanges(env)) {
-        return ImmutableList.of(ApplyChangesCompat.newApplyChangesTask(project, packages.build()));
-      } else if (ApplyChangesCompat.isApplyCodeChanges(env)) {
-        return ImmutableList.of(
-            ApplyChangesCompat.newApplyCodeChangesTask(project, packages.build()));
-      }
-    }
-    return ImmutableList.of(DeployTaskCompat.createDeployTask(project, launchOptions, apks));
-  }
-
-  @Nullable
-  @Override
   public Integer getUserId(IDevice device, ConsolePrinter consolePrinter)
       throws ExecutionException {
     return UserIdHelper.getUserIdFromConfigurationState(device, consolePrinter, configState);
   }
 
-  @NotNull
-  public static List<File> getFilteredFeatures(ApkInfo apkInfo, List<String> disabledFeatures) {
-    if (apkInfo.getFiles().size() > 1) {
-      return apkInfo.getFiles().stream()
-          .filter(feature -> DynamicAppUtils.isFeatureEnabled(disabledFeatures, feature))
-          .map(ApkFileUnit::getApkFile)
-          .collect(Collectors.toList());
-    } else {
-      return ImmutableList.of(apkInfo.getFile());
+  @Override
+  public LaunchTasksProvider getLaunchTasksProvider(LaunchOptions.Builder launchOptionsBuilder)
+      throws ExecutionException {
+    return new BlazeAndroidLaunchTasksProvider(
+        project, this, applicationIdProvider, launchOptionsBuilder);
+  }
+
+  @Override
+  public LaunchTask getApplicationLaunchTask(
+      LaunchOptions launchOptions,
+      @Nullable Integer userId,
+      @NotNull String contributorsAmStartOptions,
+      AndroidDebugger androidDebugger,
+      AndroidDebuggerState androidDebuggerState,
+      LaunchStatus launchStatus)
+      throws ExecutionException {
+    String extraFlags = UserIdHelper.getFlagsFromUserId(userId);
+    if (!contributorsAmStartOptions.isEmpty()) {
+      extraFlags += (extraFlags.isEmpty() ? "" : " ") + contributorsAmStartOptions;
     }
+
+    final StartActivityFlagsProvider startActivityFlagsProvider =
+        new DefaultStartActivityFlagsProvider(
+            androidDebugger, androidDebuggerState, project, launchOptions.isDebug(), extraFlags);
+
+    BlazeAndroidDeployInfo deployInfo;
+    try {
+      deployInfo = buildStep.getDeployInfo();
+    } catch (ApkProvisionException e) {
+      throw new ExecutionException(e);
+    }
+
+    return BlazeAndroidBinaryApplicationLaunchTaskProvider.getApplicationLaunchTask(
+        applicationIdProvider,
+        deployInfo.getMergedManifest(),
+        configState,
+        startActivityFlagsProvider,
+        launchStatus);
+  }
+
+  @Override
+  public String getAmStartOptions() {
+    return configState.getAmStartOptions();
+  }
+
+  @VisibleForTesting
+  public Collection<ApkInfo> getApkInfo(IDevice device) throws ApkProvisionException {
+    return apkProvider.getApks(device);
   }
 }

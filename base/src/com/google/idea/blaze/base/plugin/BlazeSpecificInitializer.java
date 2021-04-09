@@ -16,6 +16,7 @@
 package com.google.idea.blaze.base.plugin;
 
 import com.google.idea.blaze.base.settings.Blaze;
+import com.google.idea.common.actions.ActionCustomizer;
 import com.google.idea.common.actions.ReplaceActionHelper;
 import com.intellij.openapi.actionSystem.IdeActions;
 import com.intellij.openapi.components.ApplicationComponent;
@@ -25,7 +26,8 @@ public class BlazeSpecificInitializer implements ApplicationComponent {
 
   @Override
   public void initComponent() {
-    hideMakeActions();
+    // from 2020.1+, can't access actions until after application components have been initialized
+    ActionCustomizer.newCustomizerFor(BlazeSpecificInitializer::hideMakeActions);
   }
 
   // The original actions will be visible only on plain IDEA projects.

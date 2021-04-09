@@ -58,16 +58,15 @@ public class BlazeUserSettings implements PersistentStateComponent<BlazeUserSett
     }
   }
 
-  private static final String DEFAULT_BLAZE_PATH =
+  private static final String OLD_DEFAULT_BLAZE_PATH =
       SystemInfo.isMac ? "/usr/local/bin/blaze" : "/usr/bin/blaze";
+  private static final String DEFAULT_BLAZE_PATH = "blaze";
   private static final String DEFAULT_BAZEL_PATH = "bazel";
 
   private FocusBehavior showBlazeConsoleOnSync = FocusBehavior.ALWAYS;
   private FocusBehavior showBlazeProblemsViewOnSync = FocusBehavior.ALWAYS;
   private FocusBehavior showBlazeConsoleOnRun = FocusBehavior.ALWAYS;
   private FocusBehavior showProblemsViewOnRun = FocusBehavior.NEVER;
-  private boolean resyncAutomatically = false;
-  private boolean resyncOnProtoChanges = false;
   private boolean syncStatusPopupShown = false;
   private boolean expandSyncToWorkingSet = true;
   private boolean showPerformanceWarnings = false;
@@ -89,44 +88,6 @@ public class BlazeUserSettings implements PersistentStateComponent<BlazeUserSett
   @Override
   public void loadState(BlazeUserSettings state) {
     XmlSerializerUtil.copyBean(state, this);
-  }
-
-  /**
-   * @deprecated DO NOT USE: left here temporarily while migrating to a new settings format. Use
-   *     {@link AutoSyncSettings} instead.
-   */
-  @Deprecated
-  public void setResyncAutomatically(boolean resyncAutomatically) {
-    this.resyncAutomatically = resyncAutomatically;
-  }
-
-  /**
-   * Whether we should re-sync on changes to BUILD and project view files.
-   *
-   * @deprecated DO NOT USE: left here temporarily while migrating to a new settings format. Use
-   *     {@link AutoSyncSettings} instead.
-   */
-  @Deprecated
-  public boolean getResyncAutomatically() {
-    return resyncAutomatically;
-  }
-
-  /**
-   * @deprecated DO NOT USE: left here temporarily while migrating to a new settings format. Use
-   *     {@link AutoSyncSettings} instead.
-   */
-  @Deprecated
-  public void setResyncOnProtoChanges(boolean resyncOnProtoChanges) {
-    this.resyncOnProtoChanges = resyncOnProtoChanges;
-  }
-
-  /**
-   * @deprecated DO NOT USE: left here temporarily while migrating to a new settings format. Use
-   *     {@link AutoSyncSettings} instead.
-   */
-  @Deprecated
-  public boolean getResyncOnProtoChanges() {
-    return resyncOnProtoChanges;
   }
 
   public FocusBehavior getShowBlazeConsoleOnSync() {
@@ -193,8 +154,14 @@ public class BlazeUserSettings implements PersistentStateComponent<BlazeUserSett
     this.blazeBinaryPath = StringUtil.defaultIfEmpty(blazeBinaryPath, DEFAULT_BLAZE_PATH).trim();
   }
 
+  /** Resets the blaze binary path to its default value. */
+  public void clearBlazeBinaryPath() {
+    blazeBinaryPath = DEFAULT_BLAZE_PATH;
+  }
+
   public boolean isDefaultBlazePath() {
-    return DEFAULT_BLAZE_PATH.equals(getBlazeBinaryPath());
+    return DEFAULT_BLAZE_PATH.equals(getBlazeBinaryPath())
+        || OLD_DEFAULT_BLAZE_PATH.equals(getBlazeBinaryPath());
   }
 
   public String getBazelBinaryPath() {
@@ -251,8 +218,6 @@ public class BlazeUserSettings implements PersistentStateComponent<BlazeUserSett
       builder.put("showBlazeProblemsViewOnSync", settings.showBlazeProblemsViewOnSync.name());
       builder.put("showBlazeConsoleOnRun", settings.showBlazeConsoleOnRun.name());
       builder.put("showProblemsViewOnRun", settings.showProblemsViewOnRun.name());
-      builder.put("resyncAutomatically", Boolean.toString(settings.resyncAutomatically));
-      builder.put("resyncOnProtoChanges", Boolean.toString(settings.resyncOnProtoChanges));
       builder.put("expandSyncToWorkingSet", Boolean.toString(settings.expandSyncToWorkingSet));
       builder.put("formatBuildFilesOnSave", Boolean.toString(settings.formatBuildFilesOnSave));
       builder.put(

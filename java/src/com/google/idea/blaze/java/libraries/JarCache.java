@@ -18,10 +18,11 @@ package com.google.idea.blaze.java.libraries;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.idea.blaze.base.async.FutureUtil;
 import com.google.idea.blaze.base.command.buildresult.BlazeArtifact;
 import com.google.idea.blaze.base.command.buildresult.BlazeArtifact.LocalFileArtifact;
 import com.google.idea.blaze.base.command.buildresult.OutputArtifact;
@@ -36,11 +37,13 @@ import com.google.idea.blaze.base.io.FileSizeScanner;
 import com.google.idea.blaze.base.model.BlazeProjectData;
 import com.google.idea.blaze.base.model.RemoteOutputArtifacts;
 import com.google.idea.blaze.base.prefetch.FetchExecutor;
+import com.google.idea.blaze.base.prefetch.RemoteArtifactPrefetcher;
 import com.google.idea.blaze.base.projectview.ProjectViewManager;
 import com.google.idea.blaze.base.projectview.ProjectViewSet;
 import com.google.idea.blaze.base.scope.BlazeContext;
 import com.google.idea.blaze.base.scope.output.IssueOutput;
 import com.google.idea.blaze.base.scope.output.PrintOutput;
+import com.google.idea.blaze.base.scope.scopes.TimingScope.EventType;
 import com.google.idea.blaze.base.settings.Blaze;
 import com.google.idea.blaze.base.settings.BlazeImportSettings;
 import com.google.idea.blaze.base.settings.BlazeImportSettingsManager;
@@ -71,7 +74,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 
@@ -135,13 +137,14 @@ public class JarCache {
       BlazeProjectData projectData,
       @Nullable BlazeProjectData oldProjectData,
       SyncMode syncMode) {
-    boolean fullRefresh = syncMode == SyncMode.FULL;
     boolean enabled = updateEnabled();
-    if (!enabled || fullRefresh) {
-      clearCache();
-    }
     if (!enabled) {
+      clearCache(context, /* blockOnCompletion= */ false);
       return;
+    }
+    boolean fullRefresh = syncMode == SyncMode.FULL;
+    if (fullRefresh) {
+      clearCache(context, /* blockOnCompletion= */ true);
     }
 
     // TODO(brendandouglas): add a mechanism for removing missing files for partial syncs
@@ -187,6 +190,17 @@ public class JarCache {
                 .map(Map.Entry::getValue)
                 .collect(toImmutableList());
       }
+
+      // Prefetch all libraries to local before reading and copying content
+      ListenableFuture<?> downloadArtifactsFuture =
+          RemoteArtifactPrefetcher.getInstance()
+              .downloadArtifacts(
+                  /* projectName= */ project.getName(),
+                  /* outputArtifacts= */ BlazeArtifact.getRemoteArtifacts(updated.values()));
+      FutureUtil.waitForFuture(context, downloadArtifactsFuture)
+          .timed("FetchJars", EventType.Prefetching)
+          .withProgressMessage("Fetching jar files...")
+          .run();
 
       // update cache files, and remove files if required
       List<ListenableFuture<?>> futures = new ArrayList<>(copyLocally(updated));
@@ -264,7 +278,8 @@ public class JarCache {
                       try {
                         copyLocally(artifact, cacheFileForKey(key));
                       } catch (IOException e) {
-                        logger.warn(e);
+                        logger.warn(
+                            String.format("Fail to copy artifact %s to %s", artifact, cacheDir), e);
                       }
                     })));
     return futures;
@@ -304,15 +319,25 @@ public class JarCache {
     return new File(cacheDir, key);
   }
 
-  private void clearCache() {
-    if (cacheDir.exists()) {
-      File[] cacheFiles = cacheDir.listFiles();
-      if (cacheFiles != null) {
-        @SuppressWarnings("unused") // go/futurereturn-lsc
-        Future<?> possiblyIgnoredError = FileUtil.asyncDelete(Lists.newArrayList(cacheFiles));
-      }
-    }
+  private void clearCache(BlazeContext context, boolean blockOnCompletion) {
     cacheState = ImmutableMap.of();
+    File[] cacheFiles = cacheDir.listFiles();
+    if (cacheFiles == null) {
+      return;
+    }
+    Collection<ListenableFuture<?>> futures = deleteCacheFiles(ImmutableList.copyOf(cacheFiles));
+    if (!blockOnCompletion) {
+      return;
+    }
+    try {
+      Futures.allAsList(futures).get();
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      context.setCancelled();
+    } catch (ExecutionException e) {
+      logger.warn("Jar Cache synchronization didn't complete", e);
+      IssueOutput.warn("Jar Cache synchronization didn't complete").submit(context);
+    }
   }
 
   /**
@@ -356,7 +381,21 @@ public class JarCache {
       // TODO(brendandouglas): copy locally on the fly?
       return null;
     }
-    return ((LocalFileArtifact) output).getFile();
+    return patchExternalFilePath(((LocalFileArtifact) output).getFile());
+  }
+
+  /**
+   * A workaround for https://github.com/bazelbuild/intellij/issues/1256. Point external workspace
+   * symlinks to the corresponding fixed location.
+   */
+  private static File patchExternalFilePath(File maybeExternal) {
+    String externalString = maybeExternal.toString();
+    if (externalString.contains("/external/")
+        && !externalString.contains("/bazel-out/")
+        && !externalString.contains("/blaze-out/")) {
+      return new File(externalString.replaceAll("/execroot.*/external/", "/external/"));
+    }
+    return maybeExternal;
   }
 
   private static String cacheKeyInternal(BlazeArtifact output) {

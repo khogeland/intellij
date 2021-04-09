@@ -17,6 +17,7 @@ package com.google.idea.blaze.base.sync.sharding;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
+import static java.lang.Math.min;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
@@ -34,6 +35,7 @@ import com.google.idea.blaze.base.scope.Scope;
 import com.google.idea.blaze.base.scope.output.StatusOutput;
 import com.google.idea.blaze.base.scope.scopes.TimingScope;
 import com.google.idea.blaze.base.scope.scopes.TimingScope.EventType;
+import com.google.idea.blaze.base.settings.BuildBinaryType;
 import com.google.idea.blaze.base.sync.BlazeBuildParams;
 import com.google.idea.blaze.base.sync.aspects.BuildResult;
 import com.google.idea.blaze.base.sync.projectview.TargetExpressionList;
@@ -43,23 +45,27 @@ import com.google.idea.common.experiments.BoolExperiment;
 import com.google.idea.common.experiments.IntExperiment;
 import com.intellij.openapi.project.Project;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 /** Utility methods for sharding blaze build invocations. */
 public class BlazeBuildTargetSharder {
 
-  /** Default number of individual targets per blaze build shard. Can be overridden by the user. */
-  private static final IntExperiment targetShardSize =
-      new IntExperiment("blaze.target.shard.size", 1000);
+  /**
+   * Max number of individual targets per blaze build shard. Can be overridden by the user for local
+   * syncs.
+   */
+  private static final IntExperiment maxTargetShardSize =
+      new IntExperiment("blaze.max.target.shard.size", 10000);
 
-  /** Default # targets to keep the arg length below ARG_MAX. */
-  private static final IntExperiment argLengthShardSize =
-      new IntExperiment("arg.length.shard.size", 1000);
+  /**
+   * Default target shard size when sharding is requested but no shard size is specified. Purpose is
+   * to avoid OOMEs.
+   */
+  private static final IntExperiment defaultTargetShardSize =
+      new IntExperiment("blaze.default.target.shard.size", 1000);
 
   /** If enabled, we'll automatically shard when we think it's appropriate. */
   private static final BoolExperiment shardAutomatically =
@@ -91,9 +97,13 @@ public class BlazeBuildTargetSharder {
 
   /** Number of individual targets per blaze build shard. */
   private static int getTargetShardSize(ProjectViewSet projectViewSet) {
-    return projectViewSet
-        .getScalarValue(TargetShardSizeSection.KEY)
-        .orElse(targetShardSize.getValue());
+    int defaultLimit =
+        shardingRequested(projectViewSet)
+            ? defaultTargetShardSize.getValue()
+            : maxTargetShardSize.getValue();
+    int userSpecified =
+        projectViewSet.getScalarValue(TargetShardSizeSection.KEY).orElse(defaultLimit);
+    return min(userSpecified, TargetShardSizeLimit.getMaxTargetsPerShard().orElse(userSpecified));
   }
 
   private enum ShardingApproach {
@@ -102,8 +112,7 @@ public class BlazeBuildTargetSharder {
     SHARD_WITHOUT_EXPANDING, // split unexpanded wildcard targets into batches
   }
 
-  private static ShardingApproach getShardingApproach(
-      BlazeBuildParams buildParams, ProjectViewSet viewSet) {
+  private static ShardingApproach getShardingApproach(ProjectViewSet viewSet, boolean isRemote) {
     if (shardingRequested(viewSet)) {
       return ShardingApproach.EXPAND_AND_SHARD;
     }
@@ -112,9 +121,7 @@ public class BlazeBuildTargetSharder {
     }
     // otherwise, only expand targets before sharding (a 'complete' batching of the build) if we're
     // syncing remotely
-    return buildParams.blazeBinaryType().isRemote
-        ? ShardingApproach.EXPAND_AND_SHARD
-        : ShardingApproach.SHARD_WITHOUT_EXPANDING;
+    return isRemote ? ShardingApproach.EXPAND_AND_SHARD : ShardingApproach.SHARD_WITHOUT_EXPANDING;
   }
 
   /** Expand wildcard target patterns and partition the resulting target list. */
@@ -126,17 +133,17 @@ public class BlazeBuildTargetSharder {
       ProjectViewSet viewSet,
       WorkspacePathResolver pathResolver,
       List<TargetExpression> targets) {
-    ShardingApproach approach = getShardingApproach(buildParams, viewSet);
+    BuildBinaryType buildType = buildParams.blazeBinaryType();
+    ShardingApproach approach = getShardingApproach(viewSet, buildType.isRemote);
     switch (approach) {
       case NONE:
         return new ShardedTargetsResult(
             new ShardedTargetList(ImmutableList.of(ImmutableList.copyOf(targets))),
             BuildResult.SUCCESS);
       case SHARD_WITHOUT_EXPANDING:
-        // shard only to keep the arg length below ARG_MAX
         return new ShardedTargetsResult(
             new ShardedTargetList(
-                shardTargetsRetainingOrdering(targets, argLengthShardSize.getValue())),
+                shardTargetsRetainingOrdering(targets, getTargetShardSize(viewSet))),
             BuildResult.SUCCESS);
       case EXPAND_AND_SHARD:
         ExpandedTargetsResult expandedTargets =
@@ -148,10 +155,8 @@ public class BlazeBuildTargetSharder {
         }
 
         return new ShardedTargetsResult(
-            shardTargets(
-                expandedTargets.singleTargets,
-                buildParams.blazeBinaryType().isRemote,
-                getTargetShardSize(viewSet)),
+            shardSingleTargets(
+                expandedTargets.singleTargets, buildType, getTargetShardSize(viewSet)),
             expandedTargets.buildResult);
     }
     throw new IllegalStateException("Unhandled sharding approach: " + approach);
@@ -224,29 +229,29 @@ public class BlazeBuildTargetSharder {
         result, new ExpandedTargetsResult(singleTargets, result.buildResult));
   }
 
+  /**
+   * Shards a list of individual blaze targets (with no wildcard expressions other than for excluded
+   * target patterns).
+   */
   @SuppressWarnings("unchecked")
   @VisibleForTesting
-  static ShardedTargetList shardTargets(
-      List<TargetExpression> targets, boolean isRemote, int shardSize) {
+  static ShardedTargetList shardSingleTargets(
+      List<TargetExpression> targets, BuildBinaryType buildType, int shardSize) {
     ImmutableList<ImmutableList<Label>> batches =
-        BuildBatchingService.batchTargets(canonicalizeTargets(targets), isRemote, shardSize);
+        BuildBatchingService.batchTargets(canonicalizeSingleTargets(targets), buildType, shardSize);
     return new ShardedTargetList((ImmutableList) batches);
   }
 
   /**
-   * Given an ordered list of individual blaze targets (with no wildcard expressions), removes
-   * duplicates and excluded targets, returning an unordered set.
+   * Given an ordered list of individual blaze targets (with no wildcard expressions other than for
+   * excluded target patterns), removes duplicates and excluded targets, returning an unordered set.
    */
-  private static ImmutableSet<Label> canonicalizeTargets(List<TargetExpression> targets) {
-    Set<String> set = new HashSet<>();
-    for (TargetExpression target : targets) {
-      if (target.isExcluded()) {
-        set.remove(target.toString().substring(1));
-      } else {
-        set.add(target.toString());
-      }
-    }
-    return set.stream().map(Label::create).collect(toImmutableSet());
+  private static ImmutableSet<Label> canonicalizeSingleTargets(List<TargetExpression> targets) {
+    return filterExcludedTargets(targets).stream()
+        .filter(t -> !t.isExcluded())
+        .filter(t -> t instanceof Label)
+        .map(t -> (Label) t)
+        .collect(toImmutableSet());
   }
 
   /**
@@ -256,12 +261,13 @@ public class BlazeBuildTargetSharder {
    */
   static ImmutableList<ImmutableList<TargetExpression>> shardTargetsRetainingOrdering(
       List<TargetExpression> targets, int shardSize) {
+    targets = filterExcludedTargets(targets);
     if (targets.size() <= shardSize) {
       return ImmutableList.of(ImmutableList.copyOf(targets));
     }
     List<ImmutableList<TargetExpression>> output = new ArrayList<>();
     for (int index = 0; index < targets.size(); index += shardSize) {
-      int endIndex = Math.min(targets.size(), index + shardSize);
+      int endIndex = min(targets.size(), index + shardSize);
       List<TargetExpression> shard = new ArrayList<>(targets.subList(index, endIndex));
       if (shard.stream().filter(TargetExpression::isExcluded).count() == shard.size()) {
         continue;
@@ -274,6 +280,15 @@ public class BlazeBuildTargetSharder {
       output.add(ImmutableList.copyOf(shard));
     }
     return ImmutableList.copyOf(output);
+  }
+
+  /**
+   * Removes any trivially-excluded targets from an ordered list of target expressions. Handles
+   * included and excluded wildcard target patterns.
+   */
+  private static ImmutableList<TargetExpression> filterExcludedTargets(
+      List<TargetExpression> targets) {
+    return TargetExpressionList.create(targets).getTargets();
   }
 
   /** Returns the wildcard target patterns, ignoring exclude patterns (those starting with '-') */

@@ -20,13 +20,10 @@ import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableList;
 import com.google.idea.blaze.android.AndroidIntegrationTestSetupRule;
-import com.google.idea.blaze.android.cppapi.NdkSupport;
 import com.google.idea.blaze.android.run.BlazeAndroidRunConfigurationCommonState;
 import com.google.idea.blaze.android.run.binary.AndroidBinaryLaunchMethodsUtils.AndroidBinaryLaunchMethod;
 import com.google.idea.blaze.base.BlazeIntegrationTestCase;
 import com.google.idea.blaze.base.run.state.RunConfigurationStateEditor;
-import com.google.idea.common.experiments.ExperimentService;
-import com.google.idea.common.experiments.MockExperimentService;
 import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.util.InvalidDataException;
 import com.intellij.openapi.util.WriteExternalException;
@@ -51,12 +48,6 @@ public class BlazeAndroidBinaryRunConfigurationStateTest extends BlazeIntegratio
 
   @Before
   public final void doSetup() {
-    MockExperimentService experimentService = new MockExperimentService();
-    registerApplicationComponent(ExperimentService.class, experimentService);
-    // BlazeAndroidRunConfigurationCommonState.isNativeDebuggingEnabled() always
-    // returns false if this experiment is false.
-    experimentService.setExperiment(NdkSupport.NDK_SUPPORT, true);
-
     state = new BlazeAndroidBinaryRunConfigurationState(buildSystem().getName());
   }
 
@@ -74,6 +65,7 @@ public class BlazeAndroidBinaryRunConfigurationStateTest extends BlazeIntegratio
     state.setUserId(2);
     state.setShowLogcatAutomatically(true);
     state.setDeepLink("http://deeplink");
+    state.setAmStartOptions("-S");
 
     Element element = new Element("test");
     state.writeExternal(element);
@@ -96,6 +88,7 @@ public class BlazeAndroidBinaryRunConfigurationStateTest extends BlazeIntegratio
     assertThat(readState.getUserId()).isEqualTo(2);
     assertThat(readState.showLogcatAutomatically()).isTrue();
     assertThat(readState.getDeepLink()).isEqualTo("http://deeplink");
+    assertThat(readState.getAmStartOptions()).isEqualTo("-S");
   }
 
   @Test
@@ -120,6 +113,7 @@ public class BlazeAndroidBinaryRunConfigurationStateTest extends BlazeIntegratio
     assertThat(readState.useWorkProfileIfPresent()).isEqualTo(state.useWorkProfileIfPresent());
     assertThat(readState.getUserId()).isEqualTo(state.getUserId());
     assertThat(readState.getDeepLink()).isEqualTo(state.getDeepLink());
+    assertThat(readState.getAmStartOptions()).isEqualTo(state.getDeepLink());
   }
 
   @Test
@@ -163,6 +157,7 @@ public class BlazeAndroidBinaryRunConfigurationStateTest extends BlazeIntegratio
     state.setUseWorkProfileIfPresent(true);
     state.setUserId(2);
     state.setShowLogcatAutomatically(true);
+    state.setAmStartOptions("-S");
     // We don't test DeepLink because it is not exposed in the editor.
     // state.setDeepLink("http://deeplink");
 
@@ -184,6 +179,7 @@ public class BlazeAndroidBinaryRunConfigurationStateTest extends BlazeIntegratio
     assertThat(readState.useWorkProfileIfPresent()).isEqualTo(state.useWorkProfileIfPresent());
     assertThat(readState.getUserId()).isEqualTo(state.getUserId());
     assertThat(readState.showLogcatAutomatically()).isEqualTo(state.showLogcatAutomatically());
+    assertThat(readState.getAmStartOptions()).isEqualTo(state.getAmStartOptions());
     // We don't test DeepLink because it is not exposed in the editor.
     // assertThat(readState.getDeepLink()).isEqualTo(state.getDeepLink());
   }
@@ -210,6 +206,7 @@ public class BlazeAndroidBinaryRunConfigurationStateTest extends BlazeIntegratio
     assertThat(readState.useSplitApksIfPossible()).isEqualTo(state.useSplitApksIfPossible());
     assertThat(readState.useWorkProfileIfPresent()).isEqualTo(state.useWorkProfileIfPresent());
     assertThat(readState.getUserId()).isEqualTo(state.getUserId());
+    assertThat(readState.getAmStartOptions()).isEqualTo(state.getAmStartOptions());
     // We don't test DeepLink because it is not exposed in the editor.
     // assertThat(readState.getDeepLink()).isEqualTo(state.getDeepLink());
   }

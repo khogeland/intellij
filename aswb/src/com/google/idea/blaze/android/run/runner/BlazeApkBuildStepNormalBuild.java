@@ -15,10 +15,12 @@
  */
 package com.google.idea.blaze.android.run.runner;
 
+
 import com.android.tools.idea.run.ApkProvisionException;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.rules.android.deployinfo.AndroidDeployInfoOuterClass.AndroidDeployInfo;
+import com.google.idea.blaze.android.run.RemoteApkDownloader;
 import com.google.idea.blaze.android.run.deployinfo.BlazeAndroidDeployInfo;
 import com.google.idea.blaze.android.run.deployinfo.BlazeApkDeployInfoProtoHelper;
 import com.google.idea.blaze.android.run.deployinfo.BlazeApkDeployInfoProtoHelper.GetDeployInfoException;
@@ -27,6 +29,7 @@ import com.google.idea.blaze.base.async.process.LineProcessingOutputStream;
 import com.google.idea.blaze.base.command.BlazeCommand;
 import com.google.idea.blaze.base.command.BlazeCommandName;
 import com.google.idea.blaze.base.command.buildresult.BuildResultHelper;
+import com.google.idea.blaze.base.command.buildresult.BuildResultHelper.GetArtifactsException;
 import com.google.idea.blaze.base.command.buildresult.BuildResultHelperProvider;
 import com.google.idea.blaze.base.console.BlazeConsoleLineProcessorProvider;
 import com.google.idea.blaze.base.filecache.FileCaches;
@@ -39,12 +42,23 @@ import com.google.idea.blaze.base.scope.output.StatusOutput;
 import com.google.idea.blaze.base.settings.Blaze;
 import com.google.idea.blaze.base.sync.data.BlazeProjectDataManager;
 import com.google.idea.blaze.base.util.SaveUtil;
+import com.google.idea.common.experiments.BoolExperiment;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 
 /** Builds the APK using normal blaze build. */
 public class BlazeApkBuildStepNormalBuild implements BlazeApkBuildStep {
   @VisibleForTesting public static final String DEPLOY_INFO_SUFFIX = ".deployinfo.pb";
+
+  /** Controls the post-build remote APK fetching step. */
+  @VisibleForTesting
+  public static final BoolExperiment FETCH_REMOTE_APKS =
+      new BoolExperiment("blaze.apk.buildstep.fetch.remote.apks", true);
+
+  private static final Logger log = Logger.getInstance(BlazeApkBuildStepNormalBuild.class);
 
   private final Project project;
   private final Label label;
@@ -83,7 +97,6 @@ public class BlazeApkBuildStepNormalBuild implements BlazeApkBuildStep {
         BlazeCommand.builder(
             Blaze.getBuildSystemProvider(project).getBinaryPath(project), BlazeCommandName.BUILD);
     WorkspaceRoot workspaceRoot = WorkspaceRoot.fromProject(project);
-    File executionRoot = projectData.getBlazeInfo().getExecutionRoot();
 
     try (BuildResultHelper buildResultHelper = BuildResultHelperProvider.create(project)) {
       command
@@ -105,21 +118,71 @@ public class BlazeApkBuildStepNormalBuild implements BlazeApkBuildStep {
       FileCaches.refresh(project, context);
 
       if (retVal != 0) {
-        context.setHasError();
+        IssueOutput.error("Blaze build failed. See Blaze Console for details.").submit(context);
         return;
       }
 
       context.output(new StatusOutput("Reading deployment information..."));
+      String executionRoot =
+          ExecRootUtil.getExecutionRoot(buildResultHelper, project, buildFlags, context);
+      if (executionRoot == null) {
+        IssueOutput.error("Could not locate execroot!").submit(context);
+        return;
+      }
+
       AndroidDeployInfo deployInfoProto =
           deployInfoHelper.readDeployInfoProtoForTarget(
               label, buildResultHelper, fileName -> fileName.endsWith(DEPLOY_INFO_SUFFIX));
       deployInfo =
           deployInfoHelper.extractDeployInfoAndInvalidateManifests(
-              project, executionRoot, deployInfoProto);
+              project, new File(executionRoot), deployInfoProto);
+    } catch (GetArtifactsException e) {
+      IssueOutput.error("Could not read BEP output: " + e.getMessage()).submit(context);
     } catch (GetDeployInfoException e) {
       IssueOutput.error("Could not read apk deploy info from build: " + e.getMessage())
           .submit(context);
     }
+
+    if (FETCH_REMOTE_APKS.getValue() && deployInfo != null && apksRequireDownload(deployInfo)) {
+      context.output(new StatusOutput("Fetching remotely built APKs... "));
+      ImmutableList<File> localApks =
+          deployInfo.getApksToDeploy().stream()
+              .map(apk -> BlazeApkBuildStepNormalBuild.downloadApkIfRemote(apk, context))
+              .collect(ImmutableList.toImmutableList());
+      deployInfo =
+          new BlazeAndroidDeployInfo(
+              deployInfo.getMergedManifest(), deployInfo.getTestTargetMergedManifest(), localApks);
+      context.output(new StatusOutput("Done fetching APKs."));
+    }
+  }
+
+  private static boolean apksRequireDownload(BlazeAndroidDeployInfo deployInfo) {
+    for (File apk : deployInfo.getApksToDeploy()) {
+      for (RemoteApkDownloader downloader : RemoteApkDownloader.EP_NAME.getExtensionList()) {
+        if (downloader.canDownload(apk)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private static File downloadApkIfRemote(File apk, BlazeContext context) {
+    for (RemoteApkDownloader downloader : RemoteApkDownloader.EP_NAME.getExtensionList()) {
+      if (downloader.canDownload(apk)) {
+        try {
+          context.output(new StatusOutput("Downloading " + apk.getPath()));
+          File tempFile = Files.createTempFile("localcopy", apk.getName()).toFile();
+          tempFile.deleteOnExit();
+          downloader.download(apk, tempFile);
+          return tempFile;
+        } catch (IOException ex) {
+          // fallback to using original, don't want to block the whole app deployment process.
+          log.warn("Couldn't create local copy of file " + apk.getPath(), ex);
+        }
+      }
+    }
+    return apk;
   }
 
   @Override

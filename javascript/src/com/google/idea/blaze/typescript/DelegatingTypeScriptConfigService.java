@@ -15,22 +15,20 @@
  */
 package com.google.idea.blaze.typescript;
 
-import com.google.idea.blaze.base.model.BlazeProjectData;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+import com.google.idea.blaze.base.model.primitives.Label;
 import com.google.idea.blaze.base.settings.Blaze;
 import com.google.idea.common.experiments.BoolExperiment;
-import com.google.idea.sdkcompat.typescript.TypeScriptConfigServiceCompat;
-import com.intellij.lang.typescript.library.TypeScriptLibraryProvider;
 import com.intellij.lang.typescript.tsconfig.TypeScriptConfig;
-import com.intellij.lang.typescript.tsconfig.TypeScriptConfigLibraryUpdater;
 import com.intellij.lang.typescript.tsconfig.TypeScriptConfigService;
 import com.intellij.lang.typescript.tsconfig.TypeScriptConfigServiceImpl;
 import com.intellij.lang.typescript.tsconfig.TypeScriptConfigsChangedListener;
-import com.intellij.lang.typescript.tsconfig.graph.TypeScriptConfigGraphCache;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.ModificationTracker;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.psi.PsiManager;
+import java.io.File;
 import java.util.List;
 import java.util.Set;
 import javax.annotation.Nullable;
@@ -39,32 +37,28 @@ import javax.annotation.Nullable;
  * Switches between {@link BlazeTypeScriptConfigServiceImpl} if the project is an applicable blaze
  * project, or {@link TypeScriptConfigServiceImpl} if it isn't.
  */
-class DelegatingTypeScriptConfigService implements TypeScriptConfigServiceCompat {
+class DelegatingTypeScriptConfigService implements TypeScriptConfigService {
   private final TypeScriptConfigService impl;
 
   private static final BoolExperiment useBlazeTypeScriptConfig =
       new BoolExperiment("use.blaze.typescript.config", true);
 
-  DelegatingTypeScriptConfigService(
-      Project project,
-      @Nullable TypeScriptConfigLibraryUpdater updater,
-      TypeScriptConfigGraphCache configGraphCache) {
+  DelegatingTypeScriptConfigService(Project project) {
     if (useBlazeTypeScriptConfig.getValue() && Blaze.isBlazeProject(project)) {
       this.impl = new BlazeTypeScriptConfigServiceImpl(project);
     } else {
-      this.impl =
-          TypeScriptConfigServiceCompat.newImpl(
-              project,
-              updater,
-              PsiManager.getInstance(project),
-              TypeScriptLibraryProvider.getService(project),
-              configGraphCache);
+      this.impl = new TypeScriptConfigServiceImpl(project);
     }
   }
 
-  void update(BlazeProjectData projectData) {
+  @Override
+  public List<VirtualFile> getConfigFiles() {
+    return impl.getConfigFiles();
+  }
+
+  void update(ImmutableMap<Label, File> tsconfigs) {
     if (impl instanceof BlazeTypeScriptConfigServiceImpl) {
-      ((BlazeTypeScriptConfigServiceImpl) impl).update(projectData);
+      ((BlazeTypeScriptConfigServiceImpl) impl).update(tsconfigs);
     }
   }
 
@@ -95,14 +89,17 @@ class DelegatingTypeScriptConfigService implements TypeScriptConfigServiceCompat
     return impl.parseConfigFile(file);
   }
 
+  /** Removed in 2021.1. #api203 https://github.com/bazelbuild/intellij/issues/2329 */
   @Override
   public List<TypeScriptConfig> getConfigs() {
-    return TypeScriptConfigServiceCompat.getConfigs(impl);
+    return impl.getConfigs();
   }
 
-  @Override
-  public List<VirtualFile> doGetConfigFiles() {
-    return TypeScriptConfigServiceCompat.getConfigFiles(impl);
+  public List<TypeScriptConfig> getTypeScriptConfigs() {
+    if (impl instanceof BlazeTypeScriptConfigServiceImpl) {
+      return ((BlazeTypeScriptConfigServiceImpl) impl).getTypeScriptConfigs();
+    }
+    return ImmutableList.of();
   }
 
   @Override
@@ -117,7 +114,7 @@ class DelegatingTypeScriptConfigService implements TypeScriptConfigServiceCompat
 
   @Override
   public ModificationTracker getConfigTracker(@Nullable VirtualFile file) {
-    return TypeScriptConfigServiceCompat.getConfigTracker(impl, file);
+    return impl.getConfigTracker(file);
   }
 
   @Override

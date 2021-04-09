@@ -109,7 +109,7 @@ public final class BlazeCommandGenericRunConfigurationRunner
     }
 
     @Override
-    public ExecutionResult execute(Executor executor, ProgramRunner runner)
+    public ExecutionResult execute(Executor executor, ProgramRunner<?> runner)
         throws ExecutionException {
       DefaultExecutionResult result = (DefaultExecutionResult) super.execute(executor, runner);
       return SmRunnerUtils.attachRerunFailedTestsAction(result);
@@ -129,7 +129,7 @@ public final class BlazeCommandGenericRunConfigurationRunner
       BlazeTestUiSession testUiSession =
           canUseTestUi()
               ? TestUiSessionProvider.getInstance(project)
-                  .getTestUiSession(configuration.getTarget())
+                  .getTestUiSession(configuration.getTargets())
               : null;
       if (testUiSession != null) {
         testHandlerFlags = testUiSession.getBlazeFlags();
@@ -190,7 +190,7 @@ public final class BlazeCommandGenericRunConfigurationRunner
               : Blaze.getBuildSystemProvider(project).getBinaryPath(project);
 
       return BlazeCommand.builder(binaryPath, command)
-          .addTargets(configuration.getTarget())
+          .addTargets(configuration.getTargets())
           .addBlazeFlags(
               BlazeFlags.blazeFlags(
                   project,

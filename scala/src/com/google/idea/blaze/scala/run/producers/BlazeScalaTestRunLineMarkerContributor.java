@@ -17,12 +17,14 @@ package com.google.idea.blaze.scala.run.producers;
 
 import com.google.idea.blaze.base.run.smrunner.SmRunnerUtils;
 import com.google.idea.blaze.scala.run.Specs2Utils;
+import com.google.idea.sdkcompat.scala.ScalaTestRunLineMarkerProviderCompat;
 import com.intellij.codeInsight.TestFrameworks;
 import com.intellij.execution.lineMarker.ExecutorAction;
 import com.intellij.execution.lineMarker.RunLineMarkerContributor;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.PsiElement;
+import com.intellij.psi.impl.source.tree.LeafPsiElement;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.testIntegration.TestFramework;
 import com.intellij.util.io.URLUtil;
@@ -30,21 +32,21 @@ import java.util.Arrays;
 import java.util.function.Function;
 import javax.annotation.Nullable;
 import javax.swing.Icon;
+import org.jetbrains.plugins.scala.lang.lexer.ScalaTokenTypes;
 import org.jetbrains.plugins.scala.lang.psi.api.expr.ScInfixExpr;
 import org.jetbrains.plugins.scala.lang.psi.api.statements.ScFunctionDefinition;
 import org.jetbrains.plugins.scala.lang.psi.api.toplevel.typedef.ScClass;
-import org.jetbrains.plugins.scala.testingSupport.test.ScalaTestRunLineMarkerProvider;
 import org.jetbrains.plugins.scala.testingSupport.test.structureView.TestNodeProvider;
 
 /**
  * Generates run/debug gutter icons for scala_test, and scala_junit_tests.
  *
- * <p>{@link ScalaTestRunLineMarkerProvider} exists in the scala plugin, but it does not currently
+ * <p>{@code ScalaTestRunLineMarkerProvider} exists in the scala plugin, but it does not currently
  * try to handle scalatest and specs2 at all. For JUnit tests, it has a bug that causes it to not
  * generate icons for a test without run state (i.e., newly written tests).
  * https://github.com/JetBrains/intellij-scala/pull/381
  */
-public class BlazeScalaTestRunLineMarkerContributor extends ScalaTestRunLineMarkerProvider {
+public class BlazeScalaTestRunLineMarkerContributor extends ScalaTestRunLineMarkerProviderCompat {
   @Nullable
   @Override
   public Info getInfo(PsiElement element) {
@@ -68,6 +70,12 @@ public class BlazeScalaTestRunLineMarkerContributor extends ScalaTestRunLineMark
       }
     }
     return null;
+  }
+
+  @Override
+  public boolean isIdentifier(PsiElement element) {
+    return element instanceof LeafPsiElement
+        && ((LeafPsiElement) element).getElementType().equals(ScalaTokenTypes.tIDENTIFIER);
   }
 
   @Nullable

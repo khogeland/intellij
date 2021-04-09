@@ -28,7 +28,7 @@ import com.google.idea.blaze.base.model.primitives.Label;
 import com.google.idea.blaze.base.model.primitives.TargetExpression;
 import com.google.idea.blaze.base.model.primitives.WorkspacePath;
 import com.google.idea.blaze.base.run.BlazeCommandRunConfiguration;
-import com.google.idea.blaze.base.run.producer.BlazeRunConfigurationProducerTestCase;
+import com.google.idea.blaze.base.run.producers.BlazeRunConfigurationProducerTestCase;
 import com.google.idea.blaze.base.run.producers.PendingWebTestContext;
 import com.google.idea.blaze.base.sync.data.BlazeProjectDataManager;
 import com.intellij.execution.actions.ConfigurationContext;
@@ -49,7 +49,7 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public class OldJavascriptTestContextProviderTest extends BlazeRunConfigurationProducerTestCase {
   @Test
-  public void testClosureTestSuite() {
+  public void testClosureTestSuite() throws Throwable {
     PsiFile jsTestFile =
         configure(
             ImmutableList.of("chrome-linux"),
@@ -65,12 +65,12 @@ public class OldJavascriptTestContextProviderTest extends BlazeRunConfigurationP
 
     BlazeCommandRunConfiguration configuration = getBlazeRunConfiguration(configurationFromContext);
     assertThat(configuration.getTargetKind()).isEqualTo(RuleTypes.WEB_TEST.getKind());
-    assertThat(configuration.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//foo/bar:foo_test_chrome-linux"));
+    assertThat(configuration.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//foo/bar:foo_test_chrome-linux"));
   }
 
   @Test
-  public void testOldStyleClosureTestSuite() {
+  public void testOldStyleClosureTestSuite() throws Throwable {
     createAndIndexFile(
         WorkspacePath.createIfValid("javascript/closure/testing/testsuite.js"),
         "goog.provide('goog.testing.testSuite');",
@@ -90,12 +90,12 @@ public class OldJavascriptTestContextProviderTest extends BlazeRunConfigurationP
 
     BlazeCommandRunConfiguration configuration = getBlazeRunConfiguration(configurationFromContext);
     assertThat(configuration.getTargetKind()).isEqualTo(RuleTypes.WEB_TEST.getKind());
-    assertThat(configuration.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//foo/bar:foo_test_chrome-linux"));
+    assertThat(configuration.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//foo/bar:foo_test_chrome-linux"));
   }
 
   @Test
-  public void testTopLevelFunctions() {
+  public void testTopLevelFunctions() throws Throwable {
     PsiFile jsTestFile = configure(ImmutableList.of("chrome-linux"), "function testFoo() {}");
 
     ConfigurationContext context = createContextFromPsi(jsTestFile);
@@ -103,12 +103,12 @@ public class OldJavascriptTestContextProviderTest extends BlazeRunConfigurationP
 
     BlazeCommandRunConfiguration configuration = getBlazeRunConfiguration(configurationFromContext);
     assertThat(configuration.getTargetKind()).isEqualTo(RuleTypes.WEB_TEST.getKind());
-    assertThat(configuration.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//foo/bar:foo_test_chrome-linux"));
+    assertThat(configuration.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//foo/bar:foo_test_chrome-linux"));
   }
 
   @Test
-  public void testMultipleBrowsers() {
+  public void testMultipleBrowsers() throws Throwable {
     PsiFile jsTestFile =
         configure(ImmutableList.of("chrome-linux", "firefox-linux"), "function testFoo() {}");
 
@@ -126,12 +126,12 @@ public class OldJavascriptTestContextProviderTest extends BlazeRunConfigurationP
         () -> {});
 
     assertThat(configuration.getTargetKind()).isEqualTo(RuleTypes.WEB_TEST.getKind());
-    assertThat(configuration.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//foo/bar:foo_test_firefox-linux"));
+    assertThat(configuration.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//foo/bar:foo_test_firefox-linux"));
   }
 
   @Test
-  public void testNoTests() {
+  public void testNoTests() throws Throwable {
     PsiFile jsTestFile = configure(ImmutableList.of("chrome-linux"), "function foo() {}");
 
     ConfigurationContext context = createContextFromPsi(jsTestFile);
@@ -139,7 +139,7 @@ public class OldJavascriptTestContextProviderTest extends BlazeRunConfigurationP
   }
 
   @Test
-  public void testClosureTestSuiteImportedButUnused() {
+  public void testClosureTestSuiteImportedButUnused() throws Throwable {
     PsiFile jsTestFile =
         configure(
             ImmutableList.of("chrome-linux"),
@@ -152,7 +152,7 @@ public class OldJavascriptTestContextProviderTest extends BlazeRunConfigurationP
   }
 
   @Test
-  public void testClosureTestSuiteImportedWrongSymbol() {
+  public void testClosureTestSuiteImportedWrongSymbol() throws Throwable {
     PsiFile jsTestFile =
         configure(
             ImmutableList.of("chrome-linux"),
@@ -167,7 +167,8 @@ public class OldJavascriptTestContextProviderTest extends BlazeRunConfigurationP
     assertThat(context.getConfigurationsFromContext()).isNull();
   }
 
-  private PsiFile configure(ImmutableList<String> browsers, String... filesContents) {
+  private PsiFile configure(ImmutableList<String> browsers, String... filesContents)
+      throws Throwable {
     TargetMapBuilder targetMapBuilder =
         TargetMapBuilder.builder()
             .addTarget(

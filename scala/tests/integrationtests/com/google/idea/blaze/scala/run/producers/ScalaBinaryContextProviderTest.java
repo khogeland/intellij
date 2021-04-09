@@ -25,7 +25,7 @@ import com.google.idea.blaze.base.model.MockBlazeProjectDataManager;
 import com.google.idea.blaze.base.model.primitives.TargetExpression;
 import com.google.idea.blaze.base.model.primitives.WorkspacePath;
 import com.google.idea.blaze.base.run.BlazeRunConfiguration;
-import com.google.idea.blaze.base.run.producer.BlazeRunConfigurationProducerTestCase;
+import com.google.idea.blaze.base.run.producers.BlazeRunConfigurationProducerTestCase;
 import com.google.idea.blaze.base.sync.data.BlazeProjectDataManager;
 import com.intellij.execution.configurations.RunConfiguration;
 import com.intellij.psi.PsiFile;
@@ -38,7 +38,7 @@ import org.junit.runners.JUnit4;
 public class ScalaBinaryContextProviderTest extends BlazeRunConfigurationProducerTestCase {
 
   @Test
-  public void testUniqueScalaBinaryChosen() {
+  public void testUniqueScalaBinaryChosen() throws Throwable {
     MockBlazeProjectDataBuilder builder = MockBlazeProjectDataBuilder.builder(workspaceRoot);
     builder.setTargetMap(
         TargetMapBuilder.builder()
@@ -68,12 +68,12 @@ public class ScalaBinaryContextProviderTest extends BlazeRunConfigurationProduce
     assertThat(config).isInstanceOf(BlazeRunConfiguration.class);
     BlazeRunConfiguration blazeConfig = (BlazeRunConfiguration) config;
     assertThat(blazeConfig).isNotNull();
-    assertThat(blazeConfig.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//com/google/binary:UnrelatedName"));
+    assertThat(blazeConfig.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//com/google/binary:UnrelatedName"));
   }
 
   @Test
-  public void testNoScalaBinaryChosenIfNotInRDeps() {
+  public void testNoScalaBinaryChosenIfNotInRDeps() throws Throwable {
     MockBlazeProjectDataBuilder builder = MockBlazeProjectDataBuilder.builder(workspaceRoot);
     builder.setTargetMap(
         TargetMapBuilder.builder()
@@ -103,7 +103,7 @@ public class ScalaBinaryContextProviderTest extends BlazeRunConfigurationProduce
   }
 
   @Test
-  public void testNoResultForObjectWithoutMainMethod() {
+  public void testNoResultForObjectWithoutMainMethod() throws Throwable {
     MockBlazeProjectDataBuilder builder = MockBlazeProjectDataBuilder.builder(workspaceRoot);
     builder.setTargetMap(
         TargetMapBuilder.builder()
@@ -129,7 +129,7 @@ public class ScalaBinaryContextProviderTest extends BlazeRunConfigurationProduce
   }
 
   @Test
-  public void testScalaBinaryWithMatchingNameChosen() {
+  public void testScalaBinaryWithMatchingNameChosen() throws Throwable {
     MockBlazeProjectDataBuilder builder = MockBlazeProjectDataBuilder.builder(workspaceRoot);
     builder.setTargetMap(
         TargetMapBuilder.builder()
@@ -164,12 +164,12 @@ public class ScalaBinaryContextProviderTest extends BlazeRunConfigurationProduce
     assertThat(config).isInstanceOf(BlazeRunConfiguration.class);
     BlazeRunConfiguration blazeConfig = (BlazeRunConfiguration) config;
     assertThat(blazeConfig).isNotNull();
-    assertThat(blazeConfig.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//com/google/binary:MainClass"));
+    assertThat(blazeConfig.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//com/google/binary:MainClass"));
   }
 
   @Test
-  public void testScalaBinaryWithMatchingMainClassChosen() {
+  public void testScalaBinaryWithMatchingMainClassChosen() throws Throwable {
     MockBlazeProjectDataBuilder builder = MockBlazeProjectDataBuilder.builder(workspaceRoot);
     builder.setTargetMap(
         TargetMapBuilder.builder()
@@ -206,7 +206,7 @@ public class ScalaBinaryContextProviderTest extends BlazeRunConfigurationProduce
     assertThat(config).isInstanceOf(BlazeRunConfiguration.class);
     BlazeRunConfiguration blazeConfig = (BlazeRunConfiguration) config;
     assertThat(blazeConfig).isNotNull();
-    assertThat(blazeConfig.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//com/google/binary:OtherName"));
+    assertThat(blazeConfig.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//com/google/binary:OtherName"));
   }
 }

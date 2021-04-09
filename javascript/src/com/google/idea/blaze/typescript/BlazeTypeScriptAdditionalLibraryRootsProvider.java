@@ -37,6 +37,7 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VfsUtil;
 import java.io.File;
 import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
 import java.util.stream.Stream;
 
@@ -74,7 +75,7 @@ public final class BlazeTypeScriptAdditionalLibraryRootsProvider
     }
     return Stream.concat(
             filesFromTargetMap(project, projectData, importRoots),
-            filesFromTsConfig(project, projectData, importRoots))
+            filesFromTsConfig(project, importRoots))
         .collect(toImmutableList());
   }
 
@@ -93,17 +94,18 @@ public final class BlazeTypeScriptAdditionalLibraryRootsProvider
         .filter(Objects::nonNull);
   }
 
-  private static Stream<File> filesFromTsConfig(
-      Project project, BlazeProjectData projectData, ImportRoots importRoots) {
+  private static Stream<File> filesFromTsConfig(Project project, ImportRoots importRoots) {
     if (!moveTsconfigFilesToAdditionalLibrary.getValue()) {
       return Stream.of();
     }
-    TypeScriptConfigService typeScriptConfigService = TypeScriptConfigService.Provider.get(project);
-    if (typeScriptConfigService instanceof DelegatingTypeScriptConfigService) {
-      ((DelegatingTypeScriptConfigService) typeScriptConfigService).update(projectData);
-    }
     WorkspaceRoot workspaceRoot = WorkspaceRoot.fromProject(project);
-    return typeScriptConfigService.getConfigs().stream()
+    TypeScriptConfigService service = TypeScriptConfigService.Provider.get(project);
+    if (!(service instanceof DelegatingTypeScriptConfigService)) {
+      return Stream.of();
+    }
+    List<TypeScriptConfig> configs =
+        ((DelegatingTypeScriptConfigService) service).getTypeScriptConfigs();
+    return configs.stream()
         .map(TypeScriptConfig::getFileList)
         .flatMap(Collection::stream)
         .map(VfsUtil::virtualToIoFile)

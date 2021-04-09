@@ -1,13 +1,13 @@
 #
 # Description:
-# Checked-in copy of the bazel proto deps.
+# Proto dependencies from bazel.
 #
 
 licenses(["notice"])  # Apache 2.0
 
 java_import(
     name = "proto_deps",
-    jars = ["proto_deps.jar"],
+    jars = [":repackaged_proto_deps"],
     visibility = ["//visibility:public"],
 )
 
@@ -74,4 +74,44 @@ proto_library(
 java_proto_library(
     name = "intellij_plugin_target_deploy_info_java_proto",
     deps = [":intellij_plugin_target_deploy_info_proto"],
+)
+
+# Used in GitHub only.
+java_binary(
+    name = "jarjar_runner",
+    main_class = "org.pantsbuild.jarjar.Main",
+    runtime_deps = ["@jarjar//jar"],
+)
+
+genrule(
+    name = "repackaged_proto_deps",
+    srcs = [
+        ":proto_deps_binary_deploy.jar",
+        ":jarjar_protobuf_rule.txt",
+    ],
+    outs = [":repackaged_proto_deps.jar"],
+    cmd = """
+    $(location :jarjar_runner) \
+        process \
+        $(location :jarjar_protobuf_rule.txt) \
+        $(location :proto_deps_binary_deploy.jar) \
+        $@
+    """,
+    tools = [":jarjar_runner"],
+)
+
+java_binary(
+    name = "proto_deps_binary",
+    main_class = "None",
+    runtime_deps = [
+        ":fast_build_info_java_proto",
+        ":intellij_ide_info_java_proto",
+        ":intellij_plugin_target_deploy_info_java_proto",
+        ":project_data_java_proto",
+        "//third_party/bazel/src/main/java/com/google/devtools/build/lib/buildeventstream/proto:build_event_stream_java_proto",
+        "//third_party/bazel/src/main/java/com/google/devtools/build/lib/starlarkdebug/proto:starlark_debugging_java_proto",
+        "//third_party/bazel/src/main/protobuf:android_deploy_info_java_proto",
+        "//third_party/bazel/src/main/protobuf:build_java_proto",
+        "//third_party/bazel/src/main/protobuf:deps_java_proto",
+    ],
 )

@@ -19,17 +19,18 @@ import com.google.common.base.Functions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.idea.blaze.base.model.BlazeProjectData;
 import com.google.idea.blaze.base.model.primitives.Label;
-import com.google.idea.blaze.base.projectview.ProjectViewManager;
-import com.google.idea.blaze.base.projectview.ProjectViewSet;
 import com.google.idea.blaze.base.sync.BlazeSyncModificationTracker;
 import com.google.idea.common.experiments.BoolExperiment;
-import com.google.idea.sdkcompat.typescript.TypeScriptConfigServiceCompat;
 import com.intellij.lang.typescript.compiler.TypeScriptCompilerService;
 import com.intellij.lang.typescript.tsconfig.TypeScriptConfig;
+import com.intellij.lang.typescript.tsconfig.TypeScriptConfigService;
+import com.intellij.lang.typescript.tsconfig.TypeScriptConfigUtil;
 import com.intellij.lang.typescript.tsconfig.TypeScriptConfigsChangedListener;
+import com.intellij.openapi.application.Application;
+import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.TransactionGuard;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.ModificationTracker;
@@ -40,14 +41,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.annotation.Nullable;
 
-class BlazeTypeScriptConfigServiceImpl implements TypeScriptConfigServiceCompat {
+class BlazeTypeScriptConfigServiceImpl implements TypeScriptConfigService {
+  private static final Logger logger = Logger.getInstance(BlazeTypeScriptConfigServiceImpl.class);
   private static final BoolExperiment restartTypeScriptService =
       new BoolExperiment("restart.typescript.service", true);
 
@@ -66,16 +67,25 @@ class BlazeTypeScriptConfigServiceImpl implements TypeScriptConfigServiceCompat 
   /**
    * Checks for modifications to the tsconfig files for the project.
    *
-   * <p>This calls {@link File#lastModified()}, so should not be called on the EDT or with a read
-   * lock.
+   * <p>This uses multiple file operations to check timestamps and reload the files list, so should
+   * not be called on the EDT or with a read lock.
    */
-  void update(BlazeProjectData projectData) {
+  void update(ImmutableMap<Label, File> tsconfigs) {
+    Application application = ApplicationManager.getApplication();
+    if (application.isDispatchThread() || application.isReadAccessAllowed()) {
+      logger.error("Updating tsconfig files on EDT or with a read lock.");
+      return;
+    }
     configs =
-        parseConfigs(project, projectData).stream()
+        tsconfigs.entrySet().parallelStream()
+            .map(
+                entry ->
+                    BlazeTypeScriptConfig.getInstance(project, entry.getKey(), entry.getValue()))
+            .filter(Objects::nonNull)
             .collect(
                 ImmutableMap.toImmutableMap(TypeScriptConfig::getConfigFile, Functions.identity()));
     for (TypeScriptConfigsChangedListener listener : listeners) {
-      TypeScriptConfigServiceCompat.fireListener(listener, configs);
+      listener.afterUpdate(configs.keySet());
     }
     restartServiceIfConfigsChanged();
   }
@@ -101,24 +111,6 @@ class BlazeTypeScriptConfigServiceImpl implements TypeScriptConfigServiceCompat 
     }
   }
 
-  private static ImmutableList<TypeScriptConfig> parseConfigs(
-      Project project, BlazeProjectData projectData) {
-    ProjectViewSet projectViewSet = ProjectViewManager.getInstance(project).getProjectViewSet();
-    if (projectViewSet == null) {
-      return ImmutableList.of();
-    }
-    return getTsConfigTargets(projectViewSet).stream()
-        .map(label -> BlazeTypeScriptConfig.getInstance(project, projectData, label))
-        .filter(Objects::nonNull)
-        .collect(ImmutableList.toImmutableList());
-  }
-
-  private static Set<Label> getTsConfigTargets(ProjectViewSet projectViewSet) {
-    Set<Label> labels = new LinkedHashSet<>(projectViewSet.listItems(TsConfigRulesSection.KEY));
-    projectViewSet.getScalarValue(TsConfigRuleSection.KEY).ifPresent(labels::add);
-    return labels;
-  }
-
   @Override
   public boolean isAccessible(VirtualFile scope, VirtualFile referenced) {
     return true;
@@ -137,7 +129,8 @@ class BlazeTypeScriptConfigServiceImpl implements TypeScriptConfigServiceCompat 
   @Nullable
   @Override
   public TypeScriptConfig getPreferableConfig(VirtualFile scopeFile) {
-    return TypeScriptConfigServiceCompat.getPreferableConfig(scopeFile, configs);
+    return configs.get(
+        TypeScriptConfigUtil.getNearestParentConfigFile(scopeFile, configs.keySet()));
   }
 
   @Nullable
@@ -146,14 +139,30 @@ class BlazeTypeScriptConfigServiceImpl implements TypeScriptConfigServiceCompat 
     return null;
   }
 
+  /** Removed in 2021.1. #api203 https://github.com/bazelbuild/intellij/issues/2329 */
   @Override
   public List<TypeScriptConfig> getConfigs() {
+    return getTypeScriptConfigs();
+  }
+
+  public List<TypeScriptConfig> getTypeScriptConfigs() {
     return configs.values().asList();
   }
 
   @Override
-  public List<VirtualFile> doGetConfigFiles() {
-    return configs.keySet().asList();
+  public List<VirtualFile> getConfigFiles() {
+    List<VirtualFile> configs = this.configs.keySet().asList();
+    StackTraceElement caller = Thread.currentThread().getStackTrace()[3];
+    if (configs.size() == 1 && Objects.equals(caller.getMethodName(), "getDefaultConfigPath")) {
+      // If we have a single tsconfig file, IntelliJ will send a defaultConfig to the language
+      // service, which will override the isUseSingleInferredProject that we set and cause crashes
+      // in the language service when it tries to watch certain directories.
+      // We'll return an empty list here to fool IntelliJ into not sending the defaultConfig.
+      // This is extremely hacky. The proper fix should likely be somewhere in the tsconfig.json
+      // or in the typescript service.
+      return ImmutableList.of();
+    }
+    return configs;
   }
 
   @Override

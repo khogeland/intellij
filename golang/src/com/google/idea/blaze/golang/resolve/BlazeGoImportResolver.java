@@ -40,6 +40,7 @@ import com.intellij.psi.PsiFileSystemItem;
 import com.intellij.psi.ResolveResult;
 import com.intellij.psi.impl.SyntheticFileSystemItem;
 import com.intellij.psi.search.PsiElementProcessor;
+import com.intellij.util.ThreeState;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
@@ -85,6 +86,11 @@ class BlazeGoImportResolver implements GoImportResolver {
             importPath,
             (path) -> Optional.of(new BlazeGoPackage(project, projectData, path, target)))
         .orElse(null);
+  }
+
+  @Override
+  public ThreeState supportsRelativeImportPaths(Project project, @Nullable Module module) {
+    return ThreeState.NO;
   }
 
   @Nullable
@@ -208,8 +214,14 @@ class BlazeGoImportResolver implements GoImportResolver {
       return false;
     }
 
+    /*
+     * SyntheticFileSystemItemHelper.processChildren has a new `? super ` bounded wildcard parameter
+     * since 2020.3. Replace type with "PsiElementProcessor<? super PsiFileSystemItem>"
+     * when cleaning up #api202
+     */
+    @SuppressWarnings({"rawtypes", "RedundantSuppression"})
     @Override
-    public boolean processChildren(PsiElementProcessor<PsiFileSystemItem> psiElementProcessor) {
+    public boolean processChildren(PsiElementProcessor psiElementProcessor) {
       return false;
     }
   }

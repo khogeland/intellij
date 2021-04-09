@@ -31,15 +31,13 @@ import com.google.idea.blaze.base.sync.SyncListener;
 import com.google.idea.blaze.base.sync.SyncMode;
 import com.google.idea.blaze.base.sync.SyncResult;
 import com.google.idea.blaze.base.sync.libraries.ExternalLibraryManager.SyncPlugin;
-import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.TransactionGuard;
 import com.intellij.openapi.application.WriteAction;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.AdditionalLibraryRootsProvider;
 import com.intellij.openapi.roots.SyntheticLibrary;
-import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.vfs.AsyncVfsEventsPostProcessor;
+import com.intellij.vfs.AsyncVfsEventsPostProcessorImpl;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -68,11 +66,11 @@ public final class ExternalLibraryManagerTest extends BlazeIntegrationTestCase {
 
   @After
   public final void after() {
-    getExternalLibrary().getSourceRoots().forEach(this::delete);
+    cleanUpLibraryFiles();
   }
 
   @Test
-  public void testFilesFound() {
+  public void testFilesFound() throws Exception {
     VirtualFile fooFile = workspace.createFile(new WorkspacePath("foo/Foo.java"));
     assertThat(fooFile).isNotNull();
     VirtualFile barFile = workspace.createFile(new WorkspacePath("bar/Bar.java"));
@@ -86,7 +84,7 @@ public final class ExternalLibraryManagerTest extends BlazeIntegrationTestCase {
   }
 
   @Test
-  public void testFileRemoved() throws InterruptedException {
+  public void testFileRemoved() throws Exception {
     VirtualFile fooFile = workspace.createFile(new WorkspacePath("foo/Foo.java"));
     assertThat(fooFile).isNotNull();
     VirtualFile barFile = workspace.createFile(new WorkspacePath("bar/Bar.java"));
@@ -105,7 +103,7 @@ public final class ExternalLibraryManagerTest extends BlazeIntegrationTestCase {
   }
 
   @Test
-  public void testSuccessfulSync() {
+  public void testSuccessfulSync() throws Exception {
     // both old and new files exist, project data is changed
     VirtualFile oldFile = workspace.createFile(new WorkspacePath("old/Old.java"));
     assertThat(oldFile).isNotNull();
@@ -122,7 +120,7 @@ public final class ExternalLibraryManagerTest extends BlazeIntegrationTestCase {
   }
 
   @Test
-  public void testFailedSync() {
+  public void testFailedSync() throws Exception {
     // both old and new files exist, project data is changed
     VirtualFile oldFile = workspace.createFile(new WorkspacePath("old/Old.java"));
     assertThat(oldFile).isNotNull();
@@ -140,7 +138,7 @@ public final class ExternalLibraryManagerTest extends BlazeIntegrationTestCase {
   }
 
   @Test
-  public void testDuringSuccessfulSync() {
+  public void testDuringSuccessfulSync() throws Exception {
     VirtualFile oldFile = workspace.createFile(new WorkspacePath("foo/Foo.java"));
     assertThat(oldFile).isNotNull();
 
@@ -170,7 +168,7 @@ public final class ExternalLibraryManagerTest extends BlazeIntegrationTestCase {
   }
 
   @Test
-  public void testDuringFailedSync() {
+  public void testDuringFailedSync() throws Exception {
     VirtualFile oldFile = workspace.createFile(new WorkspacePath("foo/Foo.java"));
     assertThat(oldFile).isNotNull();
 
@@ -187,7 +185,7 @@ public final class ExternalLibraryManagerTest extends BlazeIntegrationTestCase {
     assertThat(libraryProvider.getAdditionalProjectLibraries(getProject())).isNotEmpty();
   }
 
-  private void mockSync(SyncResult syncResult) {
+  private void mockSync(SyncResult syncResult) throws Exception {
     BlazeContext context = new BlazeContext();
     syncListener.onSyncStart(getProject(), context, SyncMode.INCREMENTAL);
     if (syncResult.successful()) {
@@ -215,23 +213,9 @@ public final class ExternalLibraryManagerTest extends BlazeIntegrationTestCase {
     return library;
   }
 
-  private void deleteAndWaitForVfsEvents(VirtualFile file) throws InterruptedException {
-    Disposable disposable = Disposer.newDisposable();
-    AsyncVfsEventsPostProcessor.getInstance()
-        .addListener(
-            events -> {
-              Disposer.dispose(disposable);
-              synchronized (this) {
-                notify();
-              }
-            },
-            disposable);
+  private void deleteAndWaitForVfsEvents(VirtualFile file) {
     delete(file);
-    synchronized (this) {
-      while (!Disposer.isDisposed(disposable)) {
-        wait();
-      }
-    }
+    AsyncVfsEventsPostProcessorImpl.waitEventsProcessed();
   }
 
   private void delete(VirtualFile file) {
@@ -244,6 +228,16 @@ public final class ExternalLibraryManagerTest extends BlazeIntegrationTestCase {
                 throw new UncheckedIOException(e);
               }
             });
+  }
+
+  private void cleanUpLibraryFiles() {
+    for (File file : libraryProvider.files) {
+      VirtualFile vf = fileSystem.findFile(file.getPath());
+      if (vf != null) {
+        delete(vf);
+      }
+    }
+    AsyncVfsEventsPostProcessorImpl.waitEventsProcessed();
   }
 
   private static final class MockExternalLibraryProvider extends BlazeExternalLibraryProvider {

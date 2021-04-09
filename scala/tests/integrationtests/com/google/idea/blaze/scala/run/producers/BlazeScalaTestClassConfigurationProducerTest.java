@@ -25,7 +25,7 @@ import com.google.idea.blaze.base.model.MockBlazeProjectDataManager;
 import com.google.idea.blaze.base.model.primitives.TargetExpression;
 import com.google.idea.blaze.base.model.primitives.WorkspacePath;
 import com.google.idea.blaze.base.run.BlazeCommandRunConfiguration;
-import com.google.idea.blaze.base.run.producer.BlazeRunConfigurationProducerTestCase;
+import com.google.idea.blaze.base.run.producers.BlazeRunConfigurationProducerTestCase;
 import com.google.idea.blaze.base.run.producers.TestContextRunConfigurationProducer;
 import com.google.idea.blaze.base.sync.data.BlazeProjectDataManager;
 import com.intellij.execution.actions.ConfigurationContext;
@@ -44,7 +44,7 @@ public class BlazeScalaTestClassConfigurationProducerTest
     extends BlazeRunConfigurationProducerTestCase {
 
   @Test
-  public void testJunitTestProducedFromPsiClass() {
+  public void testJunitTestProducedFromPsiClass() throws Throwable {
     PsiFile file =
         createAndIndexFile(
             new WorkspacePath("scala/com/google/test/TestClass.scala"),
@@ -84,15 +84,15 @@ public class BlazeScalaTestClassConfigurationProducerTest
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//scala/com/google/test:TestClass"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//scala/com/google/test:TestClass"));
     assertThat(getTestFilterContents(config)).isEqualTo("--test_filter=com.google.test.TestClass#");
     assertThat(config.getName()).isEqualTo("Blaze test TestClass");
     assertThat(getCommandType(config)).isEqualTo(BlazeCommandName.TEST);
   }
 
   @Test
-  public void testScalaTestProducedFromPsiClass() {
+  public void testScalaTestProducedFromPsiClass() throws Throwable {
     PsiFile file =
         createAndIndexFile(
             WorkspacePath.createIfValid("scala/com/google/test/TestClass.scala"),
@@ -134,8 +134,8 @@ public class BlazeScalaTestClassConfigurationProducerTest
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//scala/com/google/test:TestClass"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//scala/com/google/test:TestClass"));
     assertThat(getTestFilterContents(config)).isEqualTo("--test_filter=com.google.test.TestClass");
     assertThat(config.getName()).isEqualTo("Blaze test TestClass");
     assertThat(getCommandType(config)).isEqualTo(BlazeCommandName.TEST);

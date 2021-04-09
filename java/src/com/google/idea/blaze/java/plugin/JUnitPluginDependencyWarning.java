@@ -17,7 +17,8 @@ package com.google.idea.blaze.java.plugin;
 
 import com.google.idea.blaze.base.plugin.PluginUtils;
 import com.google.idea.blaze.base.settings.Blaze;
-import com.google.idea.common.transactions.Transactions;
+import com.google.idea.common.util.Transactions;
+import com.intellij.application.Topics;
 import com.intellij.ide.AppLifecycleListener;
 import com.intellij.notification.Notification;
 import com.intellij.notification.NotificationListener;
@@ -40,7 +41,6 @@ import com.intellij.util.PlatformUtils;
 import com.intellij.util.messages.MessageBusConnection;
 import java.awt.Point;
 import java.awt.Rectangle;
-import java.util.Arrays;
 import java.util.List;
 import javax.annotation.Nullable;
 import javax.swing.JComponent;
@@ -56,9 +56,17 @@ public class JUnitPluginDependencyWarning implements ApplicationComponent {
 
   @Override
   public void initComponent() {
-    if (PlatformUtils.isIntelliJ() && !PluginUtils.isPluginEnabled(JUNIT_PLUGIN_ID)) {
-      notifyJUnitNotEnabled();
-    }
+    Topics.subscribe(
+        AppLifecycleListener.TOPIC,
+        /* disposable= */ null,
+        new AppLifecycleListener() {
+          @Override
+          public void appStarting(@Nullable Project projectFromCommandLine) {
+            if (PlatformUtils.isIntelliJ() && !PluginUtils.isPluginEnabled(JUNIT_PLUGIN_ID)) {
+              notifyJUnitNotEnabled();
+            }
+          }
+        });
   }
 
   /**
@@ -105,14 +113,12 @@ public class JUnitPluginDependencyWarning implements ApplicationComponent {
             Transactions.submitTransactionAndWait(() -> Notifications.Bus.notify(notification));
           }
 
-          // @Override #api191
-          public void appFrameCreated(String[] commandLineArgs, Ref<Boolean> willOpenProject) {
-            appFrameCreated(Arrays.asList(commandLineArgs), willOpenProject);
-          }
-
-          // @Override #api191
+          @Override
           public void appFrameCreated(
-              List<String> commandLineArgs, Ref<? super Boolean> willOpenProject) {
+              List<String> commandLineArgs, Ref<? super Boolean> willOpenProject) {}
+
+          @Override
+          public void appFrameCreated(List<String> commandLineArgs) {
             // Popup dialog in welcome screen.
             app.invokeLater(() -> showPopupNotification(message));
           }

@@ -20,10 +20,8 @@ java_library(
     deps = [
         "//base",
         "//common/experiments",
-        "//common/transactions",
         "//intellij_platform_sdk:jsr305",
         "//intellij_platform_sdk:plugin_api",
-        "//sdkcompat",
         "//third_party/javascript",
     ],
 )
@@ -46,6 +44,7 @@ stamped_plugin_xml(
     name = "javascript_plugin_xml",
     plugin_id = "com.google.idea.blaze.javascript",
     plugin_name = "com.google.idea.blaze.javascript",
+    plugin_xml = "tests/integrationtests/META-INF/test.xml",
 )
 
 intellij_plugin(
@@ -90,8 +89,6 @@ intellij_integration_test_suite(
         "//intellij_platform_sdk:jsr305",
         "//intellij_platform_sdk:plugin_api_for_tests",
         "//intellij_platform_sdk:test_libs",
-        "//java",
-        "//sdkcompat",
         "//third_party/javascript:javascript_for_tests",
         "@junit//jar",
     ],

@@ -15,6 +15,7 @@
  */
 package com.google.idea.blaze.python.run;
 
+import com.google.idea.blaze.base.io.AbsolutePathPatcher.AbsolutePathPatcherUtil;
 import com.intellij.openapi.application.AccessToken;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
@@ -42,17 +43,17 @@ public class BlazePyPositionConverter implements PyPositionConverter {
 
   private static final Logger logger = Logger.getInstance(BlazePyPositionConverter.class);
 
-  @SuppressWarnings("MissingOverride") // (briefly) removed in 2019.1
+  @Override
   public PySourcePosition create(String filePath, int line) {
     return new PySourcePosition(convertFilePath(filePath), line) {};
   }
 
-  @SuppressWarnings("MissingOverride") // added in 2019.1 #api183
+  @Override
   public PySourcePosition convertPythonToFrame(String filePath, int line) {
     return new PySourcePosition(filePath, line) {};
   }
 
-  @SuppressWarnings("MissingOverride") // added in 2019.1 #api183
+  @Override
   public PySourcePosition convertFrameToPython(PySourcePosition position) {
     return position;
   }
@@ -64,13 +65,13 @@ public class BlazePyPositionConverter implements PyPositionConverter {
         convertLocalLineToRemote(position.getFile(), position.getLine())) {};
   }
 
-  @SuppressWarnings("MissingOverride") // (briefly) removed in 2017.3
+  @Override
   @Nullable
   public XSourcePosition convertFromPython(PySourcePosition position) {
     return createXSourcePosition(getVirtualFile(position.getFile()), position.getLine());
   }
 
-  @SuppressWarnings("MissingOverride") // added in 2017.3
+  @Override
   @Nullable
   public XSourcePosition convertFromPython(PySourcePosition position, String frameName) {
     return createXSourcePosition(getVirtualFile(position.getFile()), position.getLine());
@@ -84,11 +85,11 @@ public class BlazePyPositionConverter implements PyPositionConverter {
   private static String convertFilePath(String filePath) {
     File file = new File(filePath);
     try {
-      return file.getCanonicalPath();
+      filePath = file.getCanonicalPath();
     } catch (IOException e) {
       logger.warn(e);
-      return filePath;
     }
+    return AbsolutePathPatcherUtil.fixPath(filePath);
   }
 
   private static VirtualFile getVirtualFile(String filePath) {

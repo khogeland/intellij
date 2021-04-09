@@ -16,6 +16,7 @@
 package com.google.idea.blaze.java.sync.importer;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth8.assertThat;
 import static org.junit.Assert.assertNotNull;
 
 import com.google.common.collect.ImmutableList;
@@ -47,6 +48,7 @@ import com.google.idea.blaze.base.model.primitives.WorkspaceRoot;
 import com.google.idea.blaze.base.model.primitives.WorkspaceType;
 import com.google.idea.blaze.base.prefetch.MockPrefetchService;
 import com.google.idea.blaze.base.prefetch.PrefetchService;
+import com.google.idea.blaze.base.prefetch.RemoteArtifactPrefetcher;
 import com.google.idea.blaze.base.projectview.ProjectView;
 import com.google.idea.blaze.base.projectview.ProjectViewSet;
 import com.google.idea.blaze.base.projectview.section.Glob;
@@ -63,13 +65,16 @@ import com.google.idea.blaze.base.settings.Blaze;
 import com.google.idea.blaze.base.settings.BlazeImportSettings;
 import com.google.idea.blaze.base.settings.BlazeImportSettingsManager;
 import com.google.idea.blaze.base.settings.BuildSystem;
+import com.google.idea.blaze.base.sync.MockRemoteArtifactPrefetcher;
 import com.google.idea.blaze.base.sync.projectview.WorkspaceLanguageSettings;
 import com.google.idea.blaze.base.sync.workspace.ArtifactLocationDecoder;
 import com.google.idea.blaze.base.sync.workspace.MockArtifactLocationDecoder;
 import com.google.idea.blaze.base.sync.workspace.WorkingSet;
 import com.google.idea.blaze.java.AndroidBlazeRules;
 import com.google.idea.blaze.java.JavaBlazeRules;
+import com.google.idea.blaze.java.libraries.JarCache;
 import com.google.idea.blaze.java.sync.BlazeJavaSyncAugmenter;
+import com.google.idea.blaze.java.sync.importer.emptylibrary.EmptyLibraryFilter;
 import com.google.idea.blaze.java.sync.jdeps.MockJdepsMap;
 import com.google.idea.blaze.java.sync.model.BlazeContentEntry;
 import com.google.idea.blaze.java.sync.model.BlazeJarLibrary;
@@ -83,7 +88,10 @@ import com.google.idea.blaze.java.sync.workingset.JavaWorkingSet;
 import com.google.idea.common.experiments.ExperimentService;
 import com.google.idea.common.experiments.MockExperimentService;
 import com.intellij.openapi.extensions.impl.ExtensionPointImpl;
+import com.intellij.openapi.project.Project;
 import java.io.File;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
@@ -97,7 +105,41 @@ import org.junit.runners.JUnit4;
 @RunWith(JUnit4.class)
 public class BlazeJavaWorkspaceImporterTest extends BlazeTestCase {
 
-  private static class MockFileOperationProvider extends FileOperationProvider {}
+  private static class MockFileOperationProvider extends FileOperationProvider {
+    private final HashMap<File, Long> fileSizes = new HashMap<>();
+    private final HashMap<File, Long> lastModifiedTimes = new HashMap<>();
+
+    void setFileSize(String relativePath, long size) {
+      fileSizes.put(new File("/", relativePath), size);
+    }
+
+    @Override
+    public boolean setFileModifiedTime(File file, long time) {
+      lastModifiedTimes.put(file, time);
+      return true;
+    }
+
+    @Override
+    public long getFileSize(File file) {
+      if (fileSizes.containsKey(file)) {
+        return fileSizes.get(file);
+      }
+      if (!file.exists()) {
+        // this stops use from filtering out library jars
+        // because the test setup didn't create them.
+        return 500L;
+      }
+      return super.getFileSize(file);
+    }
+
+    @Override
+    public long getFileModifiedTime(File file) {
+      if (lastModifiedTimes.containsKey(file)) {
+        return lastModifiedTimes.get(file);
+      }
+      return super.getFileModifiedTime(file);
+    }
+  }
 
   private static final String FAKE_WORKSPACE_ROOT = "/root";
   private final WorkspaceRoot workspaceRoot = new WorkspaceRoot(new File(FAKE_WORKSPACE_ROOT));
@@ -123,12 +165,20 @@ public class BlazeJavaWorkspaceImporterTest extends BlazeTestCase {
   private JavaWorkingSet workingSet = null;
   private final WorkspaceLanguageSettings workspaceLanguageSettings =
       new WorkspaceLanguageSettings(WorkspaceType.JAVA, ImmutableSet.of(LanguageClass.JAVA));
+  private MockFileOperationProvider fileOperationProvider;
+  private MockExperimentService experimentService;
 
   @Override
   @SuppressWarnings("FunctionalInterfaceClash") // False positive on getDeclaredPackageOfJavaFile.
   protected void initTest(Container applicationServices, Container projectServices) {
-    applicationServices.register(FileOperationProvider.class, new MockFileOperationProvider());
-    applicationServices.register(ExperimentService.class, new MockExperimentService());
+    fileOperationProvider = new MockFileOperationProvider();
+    applicationServices.register(FileOperationProvider.class, fileOperationProvider);
+
+    experimentService = new MockExperimentService();
+    applicationServices.register(ExperimentService.class, experimentService);
+
+    MockRemoteArtifactPrefetcher remoteArtifactPrefetcher = new MockRemoteArtifactPrefetcher();
+    applicationServices.register(RemoteArtifactPrefetcher.class, remoteArtifactPrefetcher);
 
     ExtensionPointImpl<Kind.Provider> ep =
         registerExtensionPoint(Kind.Provider.EP_NAME, Kind.Provider.class);
@@ -170,6 +220,8 @@ public class BlazeJavaWorkspaceImporterTest extends BlazeTestCase {
 
     registerExtensionPoint(BuildSystemProvider.EP_NAME, BuildSystemProvider.class)
         .registerExtension(new BazelBuildSystemProvider());
+
+    projectServices.register(JarCache.class, new MockJarCache(project));
   }
 
   private BlazeJavaImportResult importWorkspace(
@@ -191,7 +243,8 @@ public class BlazeJavaWorkspaceImporterTest extends BlazeTestCase {
             sourceFilter,
             jdepsMap,
             workingSet,
-            FAKE_ARTIFACT_DECODER);
+            FAKE_ARTIFACT_DECODER,
+            null);
 
     return blazeWorkspaceImporter.importWorkspace(context);
   }
@@ -1044,6 +1097,44 @@ public class BlazeJavaWorkspaceImporterTest extends BlazeTestCase {
   }
 
   @Test
+  public void testEmptyLibraryExcluded() {
+    experimentService.setFeatureRolloutExperiment(EmptyLibraryFilter.filterExperiment, 100);
+    ProjectView projectView =
+        ProjectView.builder()
+            .add(
+                ListSection.builder(DirectorySection.KEY)
+                    .add(DirectoryEntry.include(new WorkspacePath("java/apps/example"))))
+            .build();
+    TargetMapBuilder targetMap =
+        TargetMapBuilder.builder()
+            .addTarget(
+                TargetIdeInfo.builder()
+                    .setLabel("//java/apps/example:example_debug")
+                    .setBuildFile(source("java/apps/example/BUILD"))
+                    .setKind("java_library")
+                    .addSource(source("java/apps/example/Test.java"))
+                    .setJavaInfo(JavaIdeInfo.builder())
+                    .addDependency("//thirdparty/a:a"));
+    jdepsMap.put(
+        TargetKey.forPlainTarget(Label.create("//java/apps/example:example_debug")),
+        Lists.newArrayList(jdepsPath("thirdparty/a.jar"), jdepsPath("thirdparty/c.jar")));
+
+    // Set fileModifiedTime so they don't default to being included. The exact time doesn't matter
+    // as long as it is not 0
+    fileOperationProvider.setFileModifiedTime(new File("/", "thirdparty/a.jar"), 176400L);
+
+    fileOperationProvider.setFileSize("thirdparty/c.jar", 22L);
+    fileOperationProvider.setFileModifiedTime(new File("/", "thirdparty/c.jar"), 176400L);
+
+    BlazeJavaImportResult result = importWorkspace(workspaceRoot, targetMap, projectView);
+    assertThat(
+            result.libraries.values().stream()
+                .map(BlazeJavaWorkspaceImporterTest::libraryFileName)
+                .collect(Collectors.toList()))
+        .containsExactly("a.jar");
+  }
+
+  @Test
   public void testJarsGeneratedFromProjectSourcesExcluded() {
     ProjectView projectView =
         ProjectView.builder()
@@ -1435,7 +1526,67 @@ public class BlazeJavaWorkspaceImporterTest extends BlazeTestCase {
   }
 
   @Test
-  public void testSyncAugmenter() {
+  public void testSyncAugmenter_notAttachGenerateJar() {
+    augmenters.registerExtension(
+        new BlazeJavaSyncAugmenter() {
+
+          @Override
+          public void addJarsForSourceTarget(
+              WorkspaceLanguageSettings workspaceLanguageSettings,
+              ProjectViewSet projectViewSet,
+              TargetIdeInfo target,
+              Collection<BlazeJarLibrary> jars,
+              Collection<BlazeJarLibrary> genJars) {
+            if (target.getKey().getLabel().equals(Label.create("//java/example:kotlinlib"))) {
+              jars.add(
+                  new BlazeJarLibrary(
+                      LibraryArtifact.builder().setInterfaceJar(gen("source.jar")).build(),
+                      target.getKey()));
+            }
+          }
+
+          @Override
+          public boolean shouldAttachGenJar(TargetIdeInfo target) {
+            return !target.getKey().getLabel().equals(Label.create("//java/example:kotlinlib"));
+          }
+        });
+
+    ProjectView projectView =
+        ProjectView.builder()
+            .add(
+                ListSection.builder(DirectorySection.KEY)
+                    .add(DirectoryEntry.include(new WorkspacePath("java/example"))))
+            .build();
+
+    TargetMapBuilder targetMapBuilder =
+        TargetMapBuilder.builder()
+            .addTarget(
+                TargetIdeInfo.builder()
+                    .setLabel("//java/example:kotlinlib")
+                    .setBuildFile(source("java/example/BUILD"))
+                    .setKind("java_library")
+                    .addSource(source("Source.java"))
+                    .addDependency("//java/lib:lib")
+                    .setJavaInfo(
+                        JavaIdeInfo.builder()
+                            .addGeneratedJar(
+                                LibraryArtifact.builder().setInterfaceJar(gen("generated.jar")))))
+            .addTarget(
+                TargetIdeInfo.builder()
+                    .setLabel("//java/lib:lib")
+                    .setBuildFile(source("java/lib/BUILD"))
+                    .setKind("java_library")
+                    .addSource(source("Lib.java"))
+                    .setJavaInfo(JavaIdeInfo.builder()));
+
+    BlazeJavaImportResult result = importWorkspace(workspaceRoot, targetMapBuilder, projectView);
+    assertThat(
+            result.libraries.values().stream().map(BlazeJavaWorkspaceImporterTest::libraryFileName))
+        .containsExactly("source.jar");
+  }
+
+  @Test
+  public void testSyncAugmenter_attachGeneratedJar() {
     augmenters.registerExtension(
         (workspaceLanguageSettings, projectViewSet, target, jars, genJars) -> {
           if (target.getKey().getLabel().equals(Label.create("//java/example:source"))) {
@@ -1462,7 +1613,10 @@ public class BlazeJavaWorkspaceImporterTest extends BlazeTestCase {
                     .setKind("java_library")
                     .addSource(source("Source.java"))
                     .addDependency("//java/lib:lib")
-                    .setJavaInfo(JavaIdeInfo.builder()))
+                    .setJavaInfo(
+                        JavaIdeInfo.builder()
+                            .addGeneratedJar(
+                                LibraryArtifact.builder().setInterfaceJar(gen("generated.jar")))))
             .addTarget(
                 TargetIdeInfo.builder()
                     .setLabel("//java/lib:lib")
@@ -1473,13 +1627,10 @@ public class BlazeJavaWorkspaceImporterTest extends BlazeTestCase {
 
     BlazeJavaImportResult result = importWorkspace(workspaceRoot, targetMapBuilder, projectView);
     assertThat(
-            result
-                .libraries
-                .values()
-                .stream()
+            result.libraries.values().stream()
                 .map(BlazeJavaWorkspaceImporterTest::libraryFileName)
                 .collect(Collectors.toList()))
-        .containsExactly("source.jar");
+        .containsExactly("source.jar", "generated.jar");
   }
 
   /* Utility methods */
@@ -1518,5 +1669,18 @@ public class BlazeJavaWorkspaceImporterTest extends BlazeTestCase {
 
   private static String jdepsPath(String relativePath) {
     return FAKE_GEN_ROOT_EXECUTION_PATH_FRAGMENT + "/" + relativePath;
+  }
+
+  private static class MockJarCache extends JarCache {
+
+    public MockJarCache(Project project) {
+      super(project);
+    }
+
+    @Override
+    @Nullable
+    public File getCachedJar(ArtifactLocationDecoder decoder, BlazeJarLibrary library) {
+      return null;
+    }
   }
 }

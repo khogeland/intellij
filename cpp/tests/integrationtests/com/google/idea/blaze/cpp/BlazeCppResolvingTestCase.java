@@ -21,8 +21,7 @@ import com.google.idea.blaze.base.model.MockBlazeProjectDataBuilder;
 import com.google.idea.blaze.base.model.primitives.ExecutionRootPath;
 import com.google.idea.blaze.base.model.primitives.WorkspacePath;
 import com.google.idea.blaze.base.sync.workspace.ExecutionRootPathResolver;
-import com.google.idea.sdkcompat.cidr.FileSymbolTablesCacheAdapter;
-import com.google.idea.sdkcompat.cidr.IncludedHeadersRootCompat;
+import com.google.idea.sdkcompat.cpp.IncludedHeadersRootCompat;
 import com.google.idea.testing.cidr.StubOCResolveConfiguration;
 import com.google.idea.testing.cidr.StubOCWorkspace;
 import com.intellij.openapi.vfs.VfsUtilCore;
@@ -102,6 +101,7 @@ public class BlazeCppResolvingTestCase extends BlazeCppIntegrationTestCase {
   }
 
   private void resetFileSymbols(OCFile file) {
-    FileSymbolTablesCacheAdapter.handleOutOfCodeBlockChange(getProject(), file);
+    FileSymbolTablesCache.getInstance(getProject())
+        .handleOutOfCodeBlockChange(file, /* hasMacro */ true);
   }
 }

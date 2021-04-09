@@ -16,8 +16,12 @@
 package com.google.idea.blaze.android.run.binary;
 
 import com.android.tools.idea.run.ValidationError;
+import com.android.tools.idea.run.editor.AndroidProfilersPanelCompat;
+import com.android.tools.idea.run.editor.ProfilerState;
 import com.android.tools.idea.run.util.LaunchUtils;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Maps;
 import com.google.idea.blaze.android.run.BlazeAndroidRunConfigurationCommonState;
 import com.google.idea.blaze.android.run.binary.AndroidBinaryLaunchMethodsUtils.AndroidBinaryLaunchMethod;
@@ -26,14 +30,14 @@ import com.google.idea.blaze.base.run.state.RunConfigurationStateEditor;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.InvalidDataException;
 import com.intellij.openapi.util.WriteExternalException;
-import java.util.List;
 import java.util.Map;
-import javax.annotation.Nullable;
 import org.jdom.Element;
-import org.jetbrains.android.facet.AndroidFacet;
 
 /** State specific to the android binary run configuration. */
 public final class BlazeAndroidBinaryRunConfigurationState implements RunConfigurationState {
+  /** Element name used to group the {@link ProfilerState} settings */
+  private static final String PROFILERS_ELEMENT_NAME = "Profilers";
+
   public static final String LAUNCH_DEFAULT_ACTIVITY = "default_activity";
   public static final String LAUNCH_SPECIFIC_ACTIVITY = "specific_activity";
   public static final String DO_NOTHING = "do_nothing";
@@ -53,6 +57,7 @@ public final class BlazeAndroidBinaryRunConfigurationState implements RunConfigu
 
   private static final String SHOW_LOGCAT_AUTOMATICALLY = "show-logcat-automatically";
   private boolean showLogcatAutomatically = false;
+  private ProfilerState profilerState;
 
   private static final String DEEP_LINK = "DEEP_LINK";
   private static final String ACTIVITY_CLASS = "ACTIVITY_CLASS";
@@ -62,10 +67,14 @@ public final class BlazeAndroidBinaryRunConfigurationState implements RunConfigu
   private String activityClass = "";
   private String mode = LAUNCH_DEFAULT_ACTIVITY;
 
+  private static final String AM_START_OPTIONS = "AM_START_OPTIONS";
+  private String amStartOptions = "";
+
   private final BlazeAndroidRunConfigurationCommonState commonState;
 
   BlazeAndroidBinaryRunConfigurationState(String buildSystemName) {
-    commonState = new BlazeAndroidRunConfigurationCommonState(buildSystemName, false);
+    commonState = new BlazeAndroidRunConfigurationCommonState(buildSystemName);
+    profilerState = new ProfilerState();
   }
 
   public BlazeAndroidRunConfigurationCommonState getCommonState() {
@@ -76,7 +85,8 @@ public final class BlazeAndroidBinaryRunConfigurationState implements RunConfigu
     return launchMethod;
   }
 
-  void setLaunchMethod(AndroidBinaryLaunchMethod launchMethod) {
+  @VisibleForTesting
+  public void setLaunchMethod(AndroidBinaryLaunchMethod launchMethod) {
     this.launchMethod = launchMethod;
   }
 
@@ -140,17 +150,43 @@ public final class BlazeAndroidBinaryRunConfigurationState implements RunConfigu
     this.mode = mode;
   }
 
+  public ProfilerState getProfilerState() {
+    return profilerState;
+  }
+
+  public void setAmStartOptions(String amStartOptions) {
+    this.amStartOptions = amStartOptions;
+  }
+
+  public String getAmStartOptions() {
+    return amStartOptions;
+  }
+
   /**
    * We collect errors rather than throwing to avoid missing fatal errors by exiting early for a
    * warning.
    */
-  public List<ValidationError> validate(@Nullable AndroidFacet facet) {
-    return commonState.validate(facet);
+  public ImmutableList<ValidationError> validate(Project project) {
+    ImmutableList.Builder<ValidationError> errors = ImmutableList.builder();
+    errors.addAll(commonState.validate(project));
+    if (commonState.isNativeDebuggingEnabled()
+        && AndroidBinaryLaunchMethodsUtils.useMobileInstall(launchMethod)) {
+      errors.add(
+          ValidationError.fatal("Native debugging is not supported when using mobile-install."));
+    }
+
+    return errors.build();
   }
 
   @Override
   public void readExternal(Element element) throws InvalidDataException {
     commonState.readExternal(element);
+
+    // Group profiler settings under its own section.
+    Element profilersElement = element.getChild(PROFILERS_ELEMENT_NAME);
+    if (profilersElement != null) {
+      profilerState.readExternal(profilersElement);
+    }
 
     setDeepLink(Strings.nullToEmpty(element.getAttributeValue(DEEP_LINK)));
     setActivityClass(Strings.nullToEmpty(element.getAttributeValue(ACTIVITY_CLASS)));
@@ -173,6 +209,11 @@ public final class BlazeAndroidBinaryRunConfigurationState implements RunConfigu
 
     setShowLogcatAutomatically(
         Boolean.parseBoolean(element.getAttributeValue(SHOW_LOGCAT_AUTOMATICALLY)));
+
+    String amStartOptionsString = element.getAttributeValue(AM_START_OPTIONS);
+    if (amStartOptionsString != null) {
+      setAmStartOptions(amStartOptionsString);
+    }
 
     for (Map.Entry<String, String> entry : getLegacyValues(element).entrySet()) {
       String value = entry.getValue();
@@ -201,6 +242,14 @@ public final class BlazeAndroidBinaryRunConfigurationState implements RunConfigu
   public void writeExternal(Element element) throws WriteExternalException {
     commonState.writeExternal(element);
 
+    // Group profiler settings under its own section. Previously written profiler info
+    // are replaced manually because ProfilerState#writeExternal does not handle the removal
+    // process; unlike i.e, implementers of RunConfigurationState.
+    Element profilersElement = new Element(PROFILERS_ELEMENT_NAME);
+    element.removeChildren(PROFILERS_ELEMENT_NAME);
+    element.addContent(profilersElement);
+    profilerState.writeExternal(profilersElement);
+
     element.setAttribute(DEEP_LINK, deepLink);
     element.setAttribute(ACTIVITY_CLASS, activityClass);
     element.setAttribute(MODE, mode);
@@ -208,6 +257,7 @@ public final class BlazeAndroidBinaryRunConfigurationState implements RunConfigu
     element.setAttribute(USE_SPLIT_APKS_IF_POSSIBLE, Boolean.toString(useSplitApksIfPossible));
     element.setAttribute(WORK_PROFILE_ATTR, Boolean.toString(useWorkProfileIfPresent));
     element.setAttribute(SHOW_LOGCAT_AUTOMATICALLY, Boolean.toString(showLogcatAutomatically));
+    element.setAttribute(AM_START_OPTIONS, amStartOptions);
 
     if (userId != null) {
       element.setAttribute(USER_ID_ATTR, Integer.toString(userId));
@@ -230,6 +280,8 @@ public final class BlazeAndroidBinaryRunConfigurationState implements RunConfigu
   @Override
   public RunConfigurationStateEditor getEditor(Project project) {
     return new BlazeAndroidBinaryRunConfigurationStateEditor(
-        commonState.getEditor(project), project);
+        commonState.getEditor(project),
+        new AndroidProfilersPanelCompat(project, profilerState),
+        project);
   }
 }

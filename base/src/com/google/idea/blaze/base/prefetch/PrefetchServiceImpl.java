@@ -20,6 +20,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.idea.blaze.base.io.AbsolutePathPatcher.AbsolutePathPatcherUtil;
 import com.google.idea.blaze.base.io.FileOperationProvider;
 import com.google.idea.blaze.base.model.BlazeProjectData;
 import com.google.idea.blaze.base.model.primitives.WorkspacePath;
@@ -102,7 +103,7 @@ public class PrefetchServiceImpl implements PrefetchService {
   @Nullable
   private static File toCanonicalFile(FileOperationProvider provider, File file) {
     try {
-      File canonicalFile = file.getCanonicalFile();
+      File canonicalFile = AbsolutePathPatcherUtil.fixPath(file.getCanonicalFile());
       if (provider.exists(canonicalFile)) {
         return canonicalFile;
       }

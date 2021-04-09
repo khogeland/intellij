@@ -25,7 +25,7 @@ import com.google.idea.blaze.base.model.MockBlazeProjectDataManager;
 import com.google.idea.blaze.base.model.primitives.TargetExpression;
 import com.google.idea.blaze.base.model.primitives.WorkspacePath;
 import com.google.idea.blaze.base.run.BlazeCommandRunConfiguration;
-import com.google.idea.blaze.base.run.producer.BlazeRunConfigurationProducerTestCase;
+import com.google.idea.blaze.base.run.producers.BlazeRunConfigurationProducerTestCase;
 import com.google.idea.blaze.base.run.producers.TestContextRunConfigurationProducer;
 import com.google.idea.blaze.base.sync.data.BlazeProjectDataManager;
 import com.intellij.execution.actions.ConfigurationContext;
@@ -43,7 +43,7 @@ import org.junit.runners.JUnit4;
 public class ScalaSpecs2TestContextProviderTest extends BlazeRunConfigurationProducerTestCase {
 
   @Test
-  public void testSpecs2TestProducedFromPsiClass() {
+  public void testSpecs2TestProducedFromPsiClass() throws Throwable {
     PsiFile file = createTestPsiFile();
 
     assertThat(file).isInstanceOf(ScalaFile.class);
@@ -75,8 +75,8 @@ public class ScalaSpecs2TestContextProviderTest extends BlazeRunConfigurationPro
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//scala/com/google/test:TestClass"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//scala/com/google/test:TestClass"));
     assertThat(getTestFilterContents(config)).isEqualTo("--test_filter=com.google.test.TestClass#");
     assertThat(config.getName()).isEqualTo("Blaze test TestClass");
     assertThat(getCommandType(config)).isEqualTo(BlazeCommandName.TEST);
@@ -84,7 +84,11 @@ public class ScalaSpecs2TestContextProviderTest extends BlazeRunConfigurationPro
     // TODO: also test BlazeScalaTestEventsHandler
   }
 
-  private PsiFile createTestPsiFile() {
+  private PsiFile createTestPsiFile() throws Throwable {
+    createAndIndexFile(
+        WorkspacePath.createIfValid("scala/org/junit/Test.scala"),
+        "package org.junit",
+        "class Test");
     createAndIndexFile(
         WorkspacePath.createIfValid("scala/org/junit/runner/RunWith.scala"),
         "package org.junit.runner",

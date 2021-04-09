@@ -27,7 +27,7 @@ import com.google.idea.blaze.base.model.primitives.Label;
 import com.google.idea.blaze.base.model.primitives.TargetExpression;
 import com.google.idea.blaze.base.model.primitives.WorkspacePath;
 import com.google.idea.blaze.base.run.BlazeCommandRunConfiguration;
-import com.google.idea.blaze.base.run.producer.BlazeRunConfigurationProducerTestCase;
+import com.google.idea.blaze.base.run.producers.BlazeRunConfigurationProducerTestCase;
 import com.google.idea.blaze.base.run.producers.TestContextRunConfigurationProducer;
 import com.google.idea.blaze.base.run.state.BlazeCommandRunConfigurationCommonState;
 import com.google.idea.blaze.base.sync.data.BlazeProjectDataManager;
@@ -38,6 +38,7 @@ import com.intellij.psi.PsiClassOwner;
 import com.intellij.psi.PsiFile;
 import java.util.ArrayList;
 import java.util.List;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -47,8 +48,27 @@ import org.junit.runners.JUnit4;
 public class BlazeJavaTestClassConfigurationProducerTest
     extends BlazeRunConfigurationProducerTestCase {
 
+  @Before
+  public final void setup() {
+    // required for IntelliJ to recognize annotations, JUnit version, etc.
+    workspace.createPsiFile(
+        new WorkspacePath("org/junit/runner/RunWith.java"),
+        "package org.junit.runner;"
+            + "public @interface RunWith {"
+            + "    Class<? extends Runner> value();"
+            + "}");
+    workspace.createPsiFile(
+        new WorkspacePath("org/junit/Test.java"),
+        "package org.junit;",
+        "public @interface Test {}");
+    workspace.createPsiFile(
+        new WorkspacePath("org/junit/runners/JUnit4.java"),
+        "package org.junit.runners;",
+        "public class JUnit4 {}");
+  }
+
   @Test
-  public void testProducedFromPsiFile() {
+  public void testProducedFromPsiFile() throws Throwable {
     PsiFile javaFile =
         createAndIndexFile(
             new WorkspacePath("java/com/google/test/TestClass.java"),
@@ -84,15 +104,15 @@ public class BlazeJavaTestClassConfigurationProducerTest
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//java/com/google/test:TestClass"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//java/com/google/test:TestClass"));
     assertThat(getTestFilterContents(config)).isEqualTo("--test_filter=com.google.test.TestClass#");
     assertThat(config.getName()).isEqualTo("Blaze test TestClass");
     assertThat(getCommandType(config)).isEqualTo(BlazeCommandName.TEST);
   }
 
   @Test
-  public void testProducedFromPsiClass() {
+  public void testProducedFromPsiClass() throws Throwable {
     PsiFile javaFile =
         createAndIndexFile(
             new WorkspacePath("java/com/google/test/TestClass.java"),
@@ -131,15 +151,15 @@ public class BlazeJavaTestClassConfigurationProducerTest
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//java/com/google/test:TestClass"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//java/com/google/test:TestClass"));
     assertThat(getTestFilterContents(config)).isEqualTo("--test_filter=com.google.test.TestClass#");
     assertThat(config.getName()).isEqualTo("Blaze test TestClass");
     assertThat(getCommandType(config)).isEqualTo(BlazeCommandName.TEST);
   }
 
   @Test
-  public void testProducedFromPsiClassWithInnerTestClass() {
+  public void testProducedFromPsiClassWithInnerTestClass() throws Throwable {
     PsiFile javaFile =
         createAndIndexFile(
             new WorkspacePath("java/com/google/test/OuterClass.java"),
@@ -182,8 +202,8 @@ public class BlazeJavaTestClassConfigurationProducerTest
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//java/com/google/test:OuterClass"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//java/com/google/test:OuterClass"));
     assertThat(getTestFilterContents(config))
         .isEqualTo(
             "--test_filter=\"com.google.test.OuterClass#|com.google.test.OuterClass.InnerClass#\"");
@@ -192,7 +212,7 @@ public class BlazeJavaTestClassConfigurationProducerTest
   }
 
   @Test
-  public void testConfigFromContextRecognizesItsOwnConfig() {
+  public void testConfigFromContextRecognizesItsOwnConfig() throws Throwable {
     PsiFile javaFile =
         createAndIndexFile(
             new WorkspacePath("java/com/google/test/TestClass.java"),
@@ -226,7 +246,7 @@ public class BlazeJavaTestClassConfigurationProducerTest
   }
 
   @Test
-  public void testConfigWithDifferentLabelIgnored() {
+  public void testConfigWithDifferentLabelIgnored() throws Throwable {
     PsiFile javaFile =
         createAndIndexFile(
             new WorkspacePath("java/com/google/test/TestClass.java"),
@@ -263,7 +283,7 @@ public class BlazeJavaTestClassConfigurationProducerTest
   }
 
   @Test
-  public void testConfigWithDifferentFilterIgnored() {
+  public void testConfigWithDifferentFilterIgnored() throws Throwable {
     PsiFile javaFile =
         createAndIndexFile(
             new WorkspacePath("java/com/google/test/TestClass.java"),

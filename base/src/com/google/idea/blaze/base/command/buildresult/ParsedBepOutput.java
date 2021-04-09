@@ -19,6 +19,8 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -30,6 +32,7 @@ import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.Bui
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.NamedSetOfFiles;
 import com.google.idea.blaze.base.command.buildresult.BuildEventStreamProvider.BuildEventStreamException;
 import com.google.idea.blaze.base.model.primitives.Label;
+import com.google.idea.blaze.base.sync.aspects.BuildResult;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -58,10 +61,18 @@ public final class ParsedBepOutput {
     Set<String> topLevelFileSets = new HashSet<>();
     Map<String, FileSet.Builder> fileSets = new LinkedHashMap<>();
     ImmutableSetMultimap.Builder<String, String> targetToFileSets = ImmutableSetMultimap.builder();
+    String localExecRoot = null;
+    String buildId = null;
     long startTimeMillis = 0L;
+    BuildResult buildResult = BuildResult.SUCCESS;
+    boolean emptyBuildEventStream = true;
 
     while ((event = stream.getNext()) != null) {
+      emptyBuildEventStream = false;
       switch (event.getId().getIdCase()) {
+        case WORKSPACE:
+          localExecRoot = event.getWorkspaceInfo().getLocalExecRoot();
+          continue;
         case CONFIGURATION:
           configIdToMnemonic.put(
               event.getId().getConfiguration().getId(), event.getConfiguration().getMnemonic());
@@ -99,15 +110,25 @@ public final class ParsedBepOutput {
                   });
           continue;
         case STARTED:
+          buildId = Strings.emptyToNull(event.getStarted().getUuid());
           startTimeMillis = event.getStarted().getStartTimeMillis();
+          continue;
+        case BUILD_FINISHED:
+          buildResult = BuildResult.fromExitCode(event.getFinished().getExitCode().getCode());
           continue;
         default: // continue
       }
     }
+    // If stream is empty, it means that service failed to retrieve any blaze build event from build
+    // event stream. This should not happened if a build start correctly.
+    if (emptyBuildEventStream) {
+      throw new BuildEventStreamException("No build events found");
+    }
     ImmutableMap<String, FileSet> filesMap =
         fillInTransitiveFileSetData(
             fileSets, topLevelFileSets, configIdToMnemonic, startTimeMillis);
-    return new ParsedBepOutput(filesMap, targetToFileSets.build(), startTimeMillis);
+    return new ParsedBepOutput(
+        buildId, localExecRoot, filesMap, targetToFileSets.build(), startTimeMillis, buildResult);
   }
 
   private static List<String> getFileSets(BuildEventStreamProtos.OutputGroup group) {
@@ -150,6 +171,11 @@ public final class ParsedBepOutput {
                 Map.Entry::getKey, e -> e.getValue().build(configIdToMnemonic, startTimeMillis)));
   }
 
+  @Nullable public final String buildId;
+
+  /** A path to the local execroot */
+  @Nullable private final String localExecRoot;
+
   /** A map from file set ID to file set, with the same ordering as the BEP stream. */
   private final ImmutableMap<String, FileSet> fileSets;
 
@@ -158,13 +184,33 @@ public final class ParsedBepOutput {
 
   final long syncStartTimeMillis;
 
-  private ParsedBepOutput(
+  private final BuildResult buildResult;
+
+  @VisibleForTesting
+  public ParsedBepOutput(
+      @Nullable String buildId,
+      @Nullable String localExecRoot,
       ImmutableMap<String, FileSet> fileSets,
       ImmutableSetMultimap<String, String> targetFileSets,
-      long syncStartTimeMillis) {
+      long syncStartTimeMillis,
+      BuildResult buildResult) {
+    this.buildId = buildId;
+    this.localExecRoot = localExecRoot;
     this.fileSets = fileSets;
     this.targetFileSets = targetFileSets;
     this.syncStartTimeMillis = syncStartTimeMillis;
+    this.buildResult = buildResult;
+  }
+
+  /** Returns the local execroot. */
+  @Nullable
+  public String getLocalExecRoot() {
+    return localExecRoot;
+  }
+
+  /** Returns the build result. */
+  public BuildResult getBuildResult() {
+    return buildResult;
   }
 
   /** Returns all output artifacts of the build. */

@@ -17,19 +17,19 @@ package com.google.idea.blaze.android.run.binary;
 
 import static com.android.tools.idea.run.deployment.DeviceAndSnapshotComboBoxAction.DEPLOYS_TO_LOCAL_DEVICE;
 
-import com.android.annotations.VisibleForTesting;
 import com.android.tools.idea.run.ValidationError;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Lists;
 import com.google.idea.blaze.android.run.BlazeAndroidRunConfigurationCommonState;
 import com.google.idea.blaze.android.run.BlazeAndroidRunConfigurationHandler;
 import com.google.idea.blaze.android.run.BlazeAndroidRunConfigurationValidationUtil;
+import com.google.idea.blaze.android.run.BlazeApkBuildService;
 import com.google.idea.blaze.android.run.binary.AndroidBinaryLaunchMethodsUtils.AndroidBinaryLaunchMethod;
 import com.google.idea.blaze.android.run.binary.mobileinstall.BlazeAndroidBinaryMobileInstallRunContext;
 import com.google.idea.blaze.android.run.runner.BlazeAndroidRunConfigurationRunner;
 import com.google.idea.blaze.android.run.runner.BlazeAndroidRunContext;
-import com.google.idea.blaze.android.sync.projectstructure.BlazeAndroidProjectStructureSyncer;
+import com.google.idea.blaze.android.run.runner.BlazeApkBuildStep;
 import com.google.idea.blaze.base.command.BlazeCommandName;
 import com.google.idea.blaze.base.command.BlazeInvocationContext;
 import com.google.idea.blaze.base.logging.EventLoggingService;
@@ -44,6 +44,8 @@ import com.google.idea.blaze.base.run.ExecutorType;
 import com.google.idea.blaze.base.run.confighandler.BlazeCommandRunConfigurationRunner;
 import com.google.idea.blaze.base.run.state.RunConfigurationState;
 import com.google.idea.blaze.base.settings.Blaze;
+import com.google.idea.blaze.base.sync.data.BlazeDataStorage;
+import com.google.idea.blaze.base.sync.projectstructure.ModuleFinder;
 import com.intellij.execution.ExecutionException;
 import com.intellij.execution.Executor;
 import com.intellij.execution.RunManager;
@@ -55,7 +57,6 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Messages;
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 import org.jetbrains.android.facet.AndroidFacet;
 import org.jetbrains.annotations.Nullable;
@@ -99,20 +100,8 @@ public class BlazeAndroidBinaryRunConfigurationHandler
   @Override
   @Nullable
   public Label getLabel() {
-    TargetExpression target = configuration.getTarget();
-    if (target instanceof Label) {
-      return (Label) target;
-    }
-    return null;
-  }
-
-  @Nullable
-  public Module getModule() {
-    Label target = getLabel();
-    return target != null
-        ? BlazeAndroidProjectStructureSyncer.ensureRunConfigurationModule(
-            configuration.getProject(), target)
-        : null;
+    TargetExpression target = configuration.getSingleTarget();
+    return target instanceof Label ? (Label) target : null;
   }
 
   @Override
@@ -134,13 +123,22 @@ public class BlazeAndroidBinaryRunConfigurationHandler
     // 2. Any other validation is done during edit-time of the run configuration before saving.
     BlazeCommandRunConfiguration configFromEnv =
         BlazeAndroidRunConfigurationHandler.getCommandConfig(env);
-    configuration.setTarget(configFromEnv.getTarget());
+    configuration.setTarget(configFromEnv.getSingleTarget());
 
-    Module module = getModule();
+    BlazeAndroidRunConfigurationValidationUtil.validate(project);
+    Module module =
+        ModuleFinder.getInstance(env.getProject())
+            .findModuleByName(BlazeDataStorage.WORKSPACE_MODULE_NAME);
     AndroidFacet facet = module != null ? AndroidFacet.getInstance(module) : null;
     ProjectViewSet projectViewSet = ProjectViewManager.getInstance(project).getProjectViewSet();
-    BlazeAndroidRunConfigurationValidationUtil.validateExecution(module, facet, projectViewSet);
 
+    // Only suggest building with mobile-install if native debugging isn't enabled.
+    if (configState.getLaunchMethod() == AndroidBinaryLaunchMethod.NON_BLAZE
+        && !configState.getCommonState().isNativeDebuggingEnabled()) {
+      maybeShowMobileInstallOptIn(project, configuration);
+    }
+
+    // Create build step for matching launch method.
     ImmutableList<String> blazeFlags =
         configState
             .getCommonState()
@@ -153,38 +151,49 @@ public class BlazeAndroidBinaryRunConfigurationHandler
     ImmutableList<String> exeFlags =
         ImmutableList.copyOf(
             configState.getCommonState().getExeFlagsState().getFlagsForExternalProcesses());
-    BlazeAndroidRunContext runContext = createRunContext(project, facet, env, blazeFlags, exeFlags);
+    BlazeApkBuildStep buildStep =
+        BlazeApkBuildService.getInstance(project)
+            .getBuildStep(
+                AndroidBinaryLaunchMethodsUtils.useMobileInstall(configState.getLaunchMethod()),
+                getLabel(),
+                blazeFlags,
+                exeFlags);
 
-    return new BlazeAndroidRunConfigurationRunner(
-        module,
-        runContext,
-        getCommonState().getDeployTargetManager(),
-        getCommonState().getDebuggerManager(),
-        configuration);
-  }
-
-  private BlazeAndroidRunContext createRunContext(
-      Project project,
-      AndroidFacet facet,
-      ExecutionEnvironment env,
-      ImmutableList<String> blazeFlags,
-      ImmutableList<String> exeFlags) {
+    // Create run context for matching launch method.
+    BlazeAndroidRunContext runContext = null;
     switch (configState.getLaunchMethod()) {
       case NON_BLAZE:
-        if (!maybeShowMobileInstallOptIn(project, configuration)) {
-          return new BlazeAndroidBinaryNormalBuildRunContext(
-              project, facet, configuration, env, configState, getLabel(), blazeFlags);
-        }
-        // fall through
+        runContext =
+            new BlazeAndroidBinaryNormalBuildRunContext(
+                project, facet, configuration, env, configState, buildStep);
+        break;
       case MOBILE_INSTALL_V2:
         // Standardize on a single mobile-install launch method
         configState.setLaunchMethod(AndroidBinaryLaunchMethod.MOBILE_INSTALL);
         // fall through
       case MOBILE_INSTALL:
-        return new BlazeAndroidBinaryMobileInstallRunContext(
-            project, facet, configuration, env, configState, getLabel(), blazeFlags, exeFlags);
+        runContext =
+            new BlazeAndroidBinaryMobileInstallRunContext(
+                project, facet, configuration, env, configState, buildStep);
+        break;
+      default:
+        throw new ExecutionException("No compatible launch methods.");
     }
-    throw new AssertionError();
+
+    EventLoggingService.getInstance()
+        .logEvent(
+            BlazeAndroidBinaryRunConfigurationHandler.class,
+            "BlazeAndroidBinaryRun",
+            ImmutableMap.of(
+                "launchMethod",
+                configState.getLaunchMethod().name(),
+                "executorId",
+                env.getExecutor().getId(),
+                "targetLabel",
+                configuration.getSingleTarget().toString(),
+                "nativeDebuggingEnabled",
+                Boolean.toString(configState.getCommonState().isNativeDebuggingEnabled())));
+    return new BlazeAndroidRunConfigurationRunner(module, runContext, configuration);
   }
 
   @Override
@@ -197,17 +206,14 @@ public class BlazeAndroidBinaryRunConfigurationHandler
    * warning. We use a separate method for the collection so the compiler prevents us from
    * accidentally throwing.
    */
-  private List<ValidationError> validate() {
-    List<ValidationError> errors = Lists.newArrayList();
-    Module module = getModule();
-    errors.addAll(BlazeAndroidRunConfigurationValidationUtil.validateModule(module));
-    AndroidFacet facet = null;
-    if (module != null) {
-      facet = AndroidFacet.getInstance(module);
-      errors.addAll(BlazeAndroidRunConfigurationValidationUtil.validateFacet(facet, module));
-    }
-    errors.addAll(configState.validate(facet));
-    return errors;
+  private ImmutableList<ValidationError> validate() {
+    ImmutableList.Builder<ValidationError> errors = ImmutableList.builder();
+    errors.addAll(
+        BlazeAndroidRunConfigurationValidationUtil.validateWorkspaceModule(
+            configuration.getProject()));
+    errors.addAll(getCommonState().validate(configuration.getProject()));
+    errors.addAll(configState.validate(configuration.getProject()));
+    return errors.build();
   }
 
   @Override
@@ -258,7 +264,7 @@ public class BlazeAndroidBinaryRunConfigurationHandler
     LOG.info(
         "Showing mobile install opt-in dialog.\n"
             + "Run target: "
-            + configuration.getTarget()
+            + configuration.getSingleTarget()
             + "\n"
             + "Time since last prompt: "
             + (System.currentTimeMillis() - lastPrompt));

@@ -16,6 +16,7 @@
 package com.google.idea.blaze.java.run.hotswap;
 
 import com.google.idea.blaze.base.settings.Blaze;
+import com.google.idea.common.actions.ActionCustomizer;
 import com.google.idea.common.actions.ReplaceActionHelper;
 import com.intellij.debugger.actions.HotSwapAction;
 import com.intellij.openapi.actionSystem.ActionManager;
@@ -31,6 +32,10 @@ public class BlazeHotSwapAction extends AnAction {
   static class Initializer implements ApplicationComponent {
     @Override
     public void initComponent() {
+      ActionCustomizer.newCustomizerFor(Initializer::replaceAction);
+    }
+
+    private static void replaceAction() {
       AnAction delegate = ActionManager.getInstance().getAction(ACTION_ID);
       if (delegate == null) {
         // HotSwapAction not registered by default for Android Studio, though still in the classpath

@@ -17,6 +17,7 @@ package com.google.idea.blaze.typescript;
 
 import com.google.common.base.Ascii;
 import com.google.common.base.Charsets;
+import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -25,13 +26,10 @@ import com.google.idea.blaze.base.command.info.BlazeInfo;
 import com.google.idea.blaze.base.io.FileOperationProvider;
 import com.google.idea.blaze.base.io.InputStreamProvider;
 import com.google.idea.blaze.base.io.VfsUtils;
-import com.google.idea.blaze.base.model.BlazeProjectData;
 import com.google.idea.blaze.base.model.primitives.Label;
 import com.google.idea.blaze.base.model.primitives.WorkspaceRoot;
 import com.google.idea.blaze.base.settings.Blaze;
 import com.google.idea.blaze.base.settings.BuildSystem;
-import com.google.idea.common.experiments.BoolExperiment;
-import com.google.idea.sdkcompat.typescript.TypeScriptConfigCompat;
 import com.intellij.lang.javascript.frameworks.modules.JSModulePathSubstitution;
 import com.intellij.lang.javascript.library.JSLibraryUtil;
 import com.intellij.lang.typescript.tsconfig.TypeScriptConfig;
@@ -43,7 +41,6 @@ import com.intellij.lang.typescript.tsconfig.TypeScriptImportResolveContext;
 import com.intellij.lang.typescript.tsconfig.TypeScriptImportsResolverProvider;
 import com.intellij.lang.typescript.tsconfig.checkers.TypeScriptConfigFilesInclude;
 import com.intellij.lang.typescript.tsconfig.checkers.TypeScriptConfigIncludeBase;
-import com.intellij.openapi.application.ApplicationInfo;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.NotNullLazyValue;
@@ -61,7 +58,8 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import javax.annotation.Nullable;
 
 /**
@@ -74,10 +72,8 @@ import javax.annotation.Nullable;
  * <p>Resolves all the symlinks under tsconfig.runfiles, and adds all of their roots to the paths
  * substitutions.
  */
-class BlazeTypeScriptConfig implements TypeScriptConfigCompat {
+class BlazeTypeScriptConfig implements TypeScriptConfig {
   private static final Logger logger = Logger.getInstance(BlazeTypeScriptConfig.class);
-  private static final BoolExperiment typesScriptSuppressWildcardImports =
-      new BoolExperiment("typescript.suppress.wildcard.imports", true);
 
   private final Project project;
   private final Label label;
@@ -118,39 +114,78 @@ class BlazeTypeScriptConfig implements TypeScriptConfigCompat {
   private final NotNullLazyValue<List<VirtualFile>> files;
 
   @Nullable
-  static TypeScriptConfig getInstance(Project project, BlazeProjectData projectData, Label label) {
+  static TypeScriptConfig getInstance(Project project, Label label, File tsconfig) {
     WorkspaceRoot workspaceRoot = WorkspaceRoot.fromProject(project);
 
     // as seen by the project
-    VirtualFile configFile =
-        VfsUtils.resolveVirtualFile(
-            new File(workspaceRoot.fileForPath(label.blazePackage()), "tsconfig.json"));
+    VirtualFile configFile = VfsUtils.resolveVirtualFile(tsconfig, /* refreshIfNeeded= */ false);
     if (configFile == null) {
       return null;
     }
 
-    // TODO: handle remote output artifacts, and not rely on blaze-out/blaze-bin location
-    File blazeBin;
+    File tsconfigEditor;
     try {
-      blazeBin = projectData.getBlazeInfo().getBlazeBinDirectory().getCanonicalFile();
+      JsonObject object =
+          new JsonParser()
+              .parse(
+                  new InputStreamReader(
+                      InputStreamProvider.getInstance().forFile(tsconfig), Charsets.UTF_8))
+              .getAsJsonObject();
+      tsconfigEditor =
+          FileOperationProvider.getInstance()
+              .getCanonicalFile(
+                  new File(tsconfig.getParentFile(), object.get("extends").getAsString()));
     } catch (IOException e) {
+      logger.warn(e);
       return null;
     }
-    File tsconfigDirectory = new File(blazeBin, label.blazePackage().relativePath());
-    // contains the actual content of the tsconfig
-    File tsconfigEditor = new File(tsconfigDirectory, "tsconfig_editor.json");
 
-    // need these two to replace workspace relative paths from the blaze-bin symlink in the
-    // workspace root with workspace relative paths from the actual blaze-bin.
-    String workspacePrefix =
-        tsconfigDirectory.toPath().relativize(blazeBin.getParentFile().toPath()).toString();
+    // When a path in the tsconfig_editor refers to a file in the workspace, they'll have this
+    // prefix. This assumes that blaze-bin is just a subdirectory in the workspace root.
+    String workspacePrefix = buildWorkspacePrefix(label.blazePackage().relativePath());
+
+    // We must use this prefix instead after resolving the location of the tsconfig_editor. In this
+    // case blaze-bin is a completely unrelated directory to the workspace root. This prefix will ..
+    // all the way to the system root directory, then follow the absolute path to the workspace.
     String workspaceRelativePath =
-        tsconfigDirectory.toPath().relativize(workspaceRoot.directory().toPath()).toString();
+        tsconfigEditor
+            .getParentFile()
+            .toPath()
+            .relativize(workspaceRoot.directory().toPath())
+            .toString();
 
     return FileOperationProvider.getInstance().exists(tsconfigEditor)
         ? new BlazeTypeScriptConfig(
             project, label, configFile, tsconfigEditor, workspacePrefix, workspaceRelativePath)
         : null;
+  }
+
+  /**
+   * This is the prefix used by paths in the tsconfig to refer to files in the workspace.
+   *
+   * <p>E.g., the tsconfig file located in
+   *
+   * <pre>blaze-bin/foo/bar/tsconfig_editor.json</pre>
+   *
+   * referring to the workspace file
+   *
+   * <pre>foo/bar/foo.ts</pre>
+   *
+   * would look like
+   *
+   * <pre>../../../foo/bar/foo.ts</pre>
+   *
+   * One set of ".." for each component in the blaze package plus one for blaze-bin directory at the
+   * workspace root.
+   */
+  private static String buildWorkspacePrefix(String blazePackage) {
+    if (blazePackage.isEmpty()) {
+      return "..";
+    }
+    return Stream.concat(
+            Stream.of(".."),
+            Splitter.on('/').splitToList(blazePackage).stream().map(component -> ".."))
+        .collect(Collectors.joining("/"));
   }
 
   private BlazeTypeScriptConfig(
@@ -168,7 +203,10 @@ class BlazeTypeScriptConfig implements TypeScriptConfigCompat {
 
     this.baseUrlFile =
         NullableLazyValue.createValue(
-            () -> VfsUtils.resolveVirtualFile(new File(tsconfigEditor.getParentFile(), baseUrl)));
+            () ->
+                VfsUtils.resolveVirtualFile(
+                    new File(tsconfigEditor.getParentFile(), baseUrl),
+                    /* refreshIfNeeded= */ false));
     this.rootDirsFiles =
         NotNullLazyValue.createValue(
             () ->
@@ -191,7 +229,8 @@ class BlazeTypeScriptConfig implements TypeScriptConfigCompat {
     this.dependencies =
         NotNullLazyValue.createValue(
             () -> {
-              VirtualFile file = VfsUtils.resolveVirtualFile(tsconfigEditor);
+              VirtualFile file =
+                  VfsUtils.resolveVirtualFile(tsconfigEditor, /* refreshIfNeeded= */ false);
               return file != null ? ImmutableList.of(file) : ImmutableList.of();
             });
     this.includeChecker =
@@ -387,25 +426,8 @@ class BlazeTypeScriptConfig implements TypeScriptConfigCompat {
       runfilesPrefix = "./" + label.targetName() + ".runfiles/" + workspaceRoot.getName();
     }
 
-    boolean suppressWildcards =
-        typesScriptSuppressWildcardImports.getValue()
-            && ApplicationInfo.getInstance().getBuild().getBaselineVersion() >= 193;
-    Set<String> keys = json.keySet();
     for (Map.Entry<String, JsonElement> entry : json.entrySet()) {
       String name = entry.getKey();
-      if (suppressWildcards
-          && name.endsWith("/*")
-          && keys.contains(name.substring(0, name.length() - 2))) {
-        // If we include both the exact match (e.g., @foo/bar) and the wildcard match (@foo/bar/*)
-        // for the same path, the less accurate wildcard path will always be chosen.
-        // Disabling the wildcard match entirely should be a net positive for user experience as
-        // users are more likely to want the exact match as opposed to the wildcard match.
-        // The [TS] import suggestions provided by the typescript service should still provides
-        // options from the wildcard matches if the user still needs them.
-        // Fixed in 2019.3.2: https://youtrack.jetbrains.com/issue/WEB-42689
-        // TODO: remove after 2019.2 is obsolete #api192
-        continue;
-      }
       List<String> mappings = new ArrayList<>();
       for (JsonElement path : entry.getValue().getAsJsonArray()) {
         String pathString = path.getAsString();
@@ -438,14 +460,9 @@ class BlazeTypeScriptConfig implements TypeScriptConfigCompat {
                 return f;
               }
             })
-        .map(VfsUtils::resolveVirtualFile)
+        .map(f -> VfsUtils.resolveVirtualFile(f, /* refreshIfNeeded= */ false))
         .filter(Objects::nonNull)
         .collect(ImmutableList.toImmutableList());
-  }
-
-  @Override
-  public boolean accept(VirtualFile file) {
-    return getInclude().accept(file);
   }
 
   @Override
@@ -496,11 +513,6 @@ class BlazeTypeScriptConfig implements TypeScriptConfigCompat {
   }
 
   @Override
-  public boolean isCompileOnSave() {
-    return compileOnSave;
-  }
-
-  @Override
   public boolean isInlineSourceMap() {
     return inlineSourceMap;
   }
@@ -538,11 +550,6 @@ class BlazeTypeScriptConfig implements TypeScriptConfigCompat {
   @Override
   public ModuleTarget getModule() {
     return module;
-  }
-
-  @Override
-  public boolean isIncludedFile(VirtualFile file) {
-    return false;
   }
 
   @Override
@@ -585,14 +592,24 @@ class BlazeTypeScriptConfig implements TypeScriptConfigCompat {
     return ImmutableList.of();
   }
 
+  /**
+   * This is still useful for prefetching and adding symlink-resolved library files to the project.
+   */
   @Override
   public Collection<VirtualFile> getFileList() {
     return files.getValue();
   }
 
+  /**
+   * https://www.typescriptlang.org/docs/handbook/tsconfig-json.html
+   *
+   * <p>If the "files" and "include" are both left unspecified, the compiler defaults to including
+   * all TypeScript (.ts, .d.ts and .tsx) files in the containing directory and subdirectories
+   * except those excluded using the "exclude" property.
+   */
   @Override
   public boolean hasFilesList() {
-    return true;
+    return false;
   }
 
   @Override
@@ -669,11 +686,6 @@ class BlazeTypeScriptConfig implements TypeScriptConfigCompat {
   @Override
   public VirtualFile getRootDirFile() {
     return null;
-  }
-
-  @Override
-  public Collection<VirtualFile> getProjectReferences() {
-    return ImmutableList.of();
   }
 
   @Override

@@ -15,6 +15,7 @@
  */
 package com.google.idea.blaze.java.sync.importer;
 
+import static java.util.stream.Collectors.toList;
 
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
@@ -33,6 +34,7 @@ import com.google.idea.blaze.base.ideinfo.TargetIdeInfo;
 import com.google.idea.blaze.base.ideinfo.TargetKey;
 import com.google.idea.blaze.base.ideinfo.TargetMap;
 import com.google.idea.blaze.base.model.LibraryKey;
+import com.google.idea.blaze.base.model.SyncState;
 import com.google.idea.blaze.base.model.primitives.WorkspaceRoot;
 import com.google.idea.blaze.base.projectview.ProjectViewSet;
 import com.google.idea.blaze.base.scope.BlazeContext;
@@ -45,6 +47,7 @@ import com.google.idea.blaze.base.sync.workspace.ArtifactLocationDecoder;
 import com.google.idea.blaze.java.JavaBlazeRules;
 import com.google.idea.blaze.java.sync.BlazeJavaSyncAugmenter;
 import com.google.idea.blaze.java.sync.DuplicateSourceDetector;
+import com.google.idea.blaze.java.sync.importer.emptylibrary.EmptyLibrary;
 import com.google.idea.blaze.java.sync.jdeps.JdepsMap;
 import com.google.idea.blaze.java.sync.model.BlazeContentEntry;
 import com.google.idea.blaze.java.sync.model.BlazeJarLibrary;
@@ -60,7 +63,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 
 /** Builds a BlazeWorkspace. */
@@ -78,6 +80,7 @@ public final class BlazeJavaWorkspaceImporter {
   private final WorkspaceLanguageSettings workspaceLanguageSettings;
   private final List<BlazeJavaSyncAugmenter> augmenters;
   private final ProjectViewSet projectViewSet;
+  @Nullable private final SyncState oldSyncState;
 
   public BlazeJavaWorkspaceImporter(
       Project project,
@@ -88,7 +91,8 @@ public final class BlazeJavaWorkspaceImporter {
       JavaSourceFilter sourceFilter,
       JdepsMap jdepsMap,
       @Nullable JavaWorkingSet workingSet,
-      ArtifactLocationDecoder artifactLocationDecoder) {
+      ArtifactLocationDecoder artifactLocationDecoder,
+      @Nullable SyncState oldSyncState) {
     this.project = project;
     this.workspaceRoot = workspaceRoot;
     this.buildSystem = Blaze.getBuildSystem(project);
@@ -101,6 +105,7 @@ public final class BlazeJavaWorkspaceImporter {
     this.workspaceLanguageSettings = workspaceLanguageSettings;
     this.augmenters = Arrays.asList(BlazeJavaSyncAugmenter.EP_NAME.getExtensions());
     this.projectViewSet = projectViewSet;
+    this.oldSyncState = oldSyncState;
   }
 
   public BlazeJavaImportResult importWorkspace(BlazeContext context) {
@@ -127,24 +132,28 @@ public final class BlazeJavaWorkspaceImporter {
     }
     context.output(PrintOutput.log("Java content entry count: " + totalContentEntryCount));
 
+    BlazeJavaImportResult.Builder importResultBuilder = BlazeJavaImportResult.builder();
     ImmutableMap<LibraryKey, BlazeJarLibrary> libraries =
-        buildLibraries(workspaceBuilder, sourceFilter.libraryTargets);
+        buildLibraries(context, workspaceBuilder, sourceFilter.libraryTargets, importResultBuilder);
 
     duplicateSourceDetector.reportDuplicates(context);
 
     String sourceVersion = findSourceVersion(targetMap);
 
-    return new BlazeJavaImportResult(
-        contentEntries,
-        libraries,
-        ImmutableList.copyOf(
-            workspaceBuilder.buildOutputJars.stream().sorted().collect(Collectors.toList())),
-        ImmutableSet.copyOf(workspaceBuilder.addedSourceFiles),
-        sourceVersion);
+    return importResultBuilder
+        .setContentEntries(contentEntries)
+        .setLibraries(libraries)
+        .setBuildOutputJars(ImmutableList.sortedCopyOf(workspaceBuilder.buildOutputJars))
+        .setJavaSourceFiles(ImmutableSet.copyOf(workspaceBuilder.addedSourceFiles))
+        .setSourceVersion(sourceVersion)
+        .build();
   }
 
   private ImmutableMap<LibraryKey, BlazeJarLibrary> buildLibraries(
-      WorkspaceBuilder workspaceBuilder, List<TargetIdeInfo> libraryTargets) {
+      BlazeContext context,
+      WorkspaceBuilder workspaceBuilder,
+      List<TargetIdeInfo> libraryTargets,
+      BlazeJavaImportResult.Builder importResultBuilder) {
     // Build library maps
     Multimap<TargetKey, BlazeJarLibrary> targetKeyToLibrary = ArrayListMultimap.create();
     Map<String, BlazeJarLibrary> jdepsPathToLibrary = Maps.newHashMap();
@@ -166,9 +175,7 @@ public final class BlazeJavaWorkspaceImporter {
       List<LibraryArtifact> allJars = Lists.newArrayList();
       allJars.addAll(javaIdeInfo.getJars());
       Collection<BlazeJarLibrary> libraries =
-          allJars.stream()
-              .map(jar -> new BlazeJarLibrary(jar, target.getKey()))
-              .collect(Collectors.toList());
+          allJars.stream().map(jar -> new BlazeJarLibrary(jar, target.getKey())).collect(toList());
 
       targetKeyToLibrary.putAll(target.getKey(), libraries);
       for (BlazeJarLibrary library : libraries) {
@@ -218,7 +225,9 @@ public final class BlazeJavaWorkspaceImporter {
       result.put(library.key, library);
     }
 
-    return ImmutableMap.copyOf(result);
+    // Filter out any libraries corresponding to empty jars
+    return EmptyLibrary.removeEmptyLibraries(
+        project, context, artifactLocationDecoder, result, oldSyncState, importResultBuilder);
   }
 
   private void addLibraryToJdeps(
@@ -262,9 +271,7 @@ public final class BlazeJavaWorkspaceImporter {
         if (depTarget != null
             && JavaBlazeRules.getJavaProtoLibraryKinds().contains(depTarget.getKind())) {
           workspaceBuilder.directDeps.addAll(
-              depTarget.getDependencies().stream()
-                  .map(Dependency::getTargetKey)
-                  .collect(Collectors.toList()));
+              depTarget.getDependencies().stream().map(Dependency::getTargetKey).collect(toList()));
         } else {
           workspaceBuilder.directDeps.add(dep.getTargetKey());
         }
@@ -289,10 +296,12 @@ public final class BlazeJavaWorkspaceImporter {
         workspaceBuilder.buildOutputJars.add(classJar);
       }
     }
-    workspaceBuilder.generatedJarsFromSourceTargets.addAll(
-        javaIdeInfo.getGeneratedJars().stream()
-            .map(jar -> new BlazeJarLibrary(jar, targetKey))
-            .collect(Collectors.toList()));
+    if (augmenters.stream().allMatch(argument -> argument.shouldAttachGenJar(target))) {
+      workspaceBuilder.generatedJarsFromSourceTargets.addAll(
+          javaIdeInfo.getGeneratedJars().stream()
+              .map(jar -> new BlazeJarLibrary(jar, targetKey))
+              .collect(toList()));
+    }
     if (javaIdeInfo.getFilteredGenJar() != null) {
       workspaceBuilder.generatedJarsFromSourceTargets.add(
           new BlazeJarLibrary(javaIdeInfo.getFilteredGenJar(), targetKey));

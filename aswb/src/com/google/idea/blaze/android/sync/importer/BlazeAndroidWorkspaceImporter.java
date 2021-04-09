@@ -15,6 +15,9 @@
  */
 package com.google.idea.blaze.android.sync.importer;
 
+import static java.util.stream.Collectors.toCollection;
+
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.ImmutableList;
@@ -23,11 +26,11 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
 import com.google.idea.blaze.android.sync.importer.aggregators.DependencyUtil;
+import com.google.idea.blaze.android.sync.importer.problems.GeneratedResourceRetentionFilter;
 import com.google.idea.blaze.android.sync.importer.problems.GeneratedResourceWarnings;
 import com.google.idea.blaze.android.sync.model.AarLibrary;
 import com.google.idea.blaze.android.sync.model.AndroidResourceModule;
 import com.google.idea.blaze.android.sync.model.BlazeAndroidImportResult;
-import com.google.idea.blaze.android.sync.model.BlazeResourceLibrary;
 import com.google.idea.blaze.base.ideinfo.AndroidIdeInfo;
 import com.google.idea.blaze.base.ideinfo.AndroidResFolder;
 import com.google.idea.blaze.base.ideinfo.ArtifactLocation;
@@ -35,14 +38,19 @@ import com.google.idea.blaze.base.ideinfo.LibraryArtifact;
 import com.google.idea.blaze.base.ideinfo.TargetIdeInfo;
 import com.google.idea.blaze.base.ideinfo.TargetKey;
 import com.google.idea.blaze.base.model.LibraryKey;
+import com.google.idea.blaze.base.model.primitives.Label;
 import com.google.idea.blaze.base.scope.BlazeContext;
 import com.google.idea.blaze.base.scope.Output;
 import com.google.idea.blaze.base.scope.output.IssueOutput;
+import com.google.idea.blaze.base.scope.output.IssueOutput.Category;
 import com.google.idea.blaze.base.scope.output.PerformanceWarning;
+import com.google.idea.common.experiments.BoolExperiment;
 import com.intellij.openapi.project.Project;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -56,13 +64,27 @@ import org.jetbrains.annotations.Nullable;
 /** Builds a BlazeWorkspace. */
 public class BlazeAndroidWorkspaceImporter {
 
+  // Provides a dummy TargetKey that can be used to merge all resources need to be visible to
+  // .workspace module but are not a part of any resource module
+  public static final TargetKey WORKSPACE_RESOURCES_TARGET_KEY =
+      TargetKey.forPlainTarget(Label.create("//.workspace:resources"));
+  public static final String WORKSPACE_RESOURCES_MODULE_PACKAGE = "workspace.only.resources";
+
+  @VisibleForTesting
+  static final BoolExperiment mergeResourcesEnabled =
+      new BoolExperiment("blaze.merge.conflicting.resources", true);
+
+  @VisibleForTesting
+  static final BoolExperiment workspaceOnlyResourcesEnabled =
+      new BoolExperiment("aswb.attach.workspace.only.resources", true);
+
   private final Project project;
   private final Consumer<Output> context;
   private final BlazeImportInput input;
   // filter used to get all ArtifactLocation that under project view resource directories
   private final Predicate<ArtifactLocation> shouldCreateFakeAar;
-  ImmutableSet<String> whitelistedGenResourcePaths;
-  private final WhitelistFilter whitelistFilter;
+  ImmutableSet<String> allowedGenResourcePaths;
+  private final AllowlistFilter allowlistFilter;
 
   public BlazeAndroidWorkspaceImporter(
       Project project, BlazeContext context, BlazeImportInput input) {
@@ -76,26 +98,37 @@ public class BlazeAndroidWorkspaceImporter {
     this.input = input;
     this.project = project;
     this.shouldCreateFakeAar = BlazeImportUtil.getShouldCreateFakeAarFilter(input);
-    whitelistedGenResourcePaths =
-        BlazeImportUtil.getWhitelistedGenResourcePaths(input.projectViewSet);
-    whitelistFilter = new WhitelistFilter(whitelistedGenResourcePaths);
+    allowedGenResourcePaths = BlazeImportUtil.getAllowedGenResourcePaths(input.projectViewSet);
+    allowlistFilter =
+        new AllowlistFilter(allowedGenResourcePaths, GeneratedResourceRetentionFilter.getFilter());
   }
 
   public BlazeAndroidImportResult importWorkspace() {
     List<TargetIdeInfo> sourceTargets = BlazeImportUtil.getSourceTargets(input);
     LibraryFactory libraries = new LibraryFactory();
     ImmutableList.Builder<AndroidResourceModule> resourceModules = new ImmutableList.Builder<>();
+    ImmutableList.Builder<AndroidResourceModule> workspaceResourceModules =
+        new ImmutableList.Builder<>();
     Map<TargetKey, AndroidResourceModule.Builder> targetKeyToAndroidResourceModuleBuilder =
         new HashMap<>();
 
-    ImmutableSet<String> whitelistedGenResourcePaths =
-        BlazeImportUtil.getWhitelistedGenResourcePaths(input.projectViewSet);
+    ImmutableSet<String> allowedGenResourcePaths =
+        BlazeImportUtil.getAllowedGenResourcePaths(input.projectViewSet);
     for (TargetIdeInfo target : sourceTargets) {
       if (shouldCreateModule(target.getAndroidIdeInfo())) {
         AndroidResourceModule.Builder androidResourceModuleBuilder =
             getOrCreateResourceModuleBuilder(
                 target, libraries, targetKeyToAndroidResourceModuleBuilder);
         resourceModules.add(androidResourceModuleBuilder.build());
+      } else if (workspaceOnlyResourcesEnabled.getValue()
+          && dependsOnResourceDeclaringDependencies(target)) {
+        // Add the target to list of potential resource modules if any of target's dependencies
+        // declare resources. A target is allowed to consume resources even if it does not declare
+        // any of its own
+        AndroidResourceModule.Builder resourceModuleBuilder =
+            getOrCreateResourceModuleBuilder(
+                target, libraries, targetKeyToAndroidResourceModuleBuilder);
+        workspaceResourceModules.add(resourceModuleBuilder.build());
       }
     }
 
@@ -104,16 +137,17 @@ public class BlazeAndroidWorkspaceImporter {
         project,
         input.projectViewSet,
         input.artifactLocationDecoder,
-        whitelistFilter.testedAgainstWhitelist,
-        whitelistedGenResourcePaths);
+        allowlistFilter.testedAgainstAllowlist,
+        allowedGenResourcePaths);
 
     ImmutableList<AndroidResourceModule> androidResourceModules =
-        buildAndroidResourceModules(resourceModules.build());
+        buildAndroidResourceModules(resourceModules.build(), workspaceResourceModules.build());
+
     return new BlazeAndroidImportResult(
         androidResourceModules,
-        libraries.getBlazeResourceLibs(),
         libraries.getAarLibs(),
-        BlazeImportUtil.getJavacJars(input.targetMap.targets()));
+        BlazeImportUtil.getJavacJars(input.targetMap.targets()),
+        BlazeImportUtil.getResourceJars(input.targetMap.targets()));
   }
 
   /**
@@ -172,13 +206,22 @@ public class BlazeAndroidWorkspaceImporter {
       return false;
     }
     return shouldGenerateResources(androidIdeInfo)
-        && shouldGenerateResourceModule(androidIdeInfo, whitelistFilter);
+        && shouldGenerateResourceModule(androidIdeInfo, allowlistFilter);
+  }
+
+  /** Returns true if any direct dependency of `androidIdeInfo` declares resources. */
+  private boolean dependsOnResourceDeclaringDependencies(TargetIdeInfo androidIdeInfo) {
+    List<TargetKey> dependencies = DependencyUtil.getResourceDependencies(androidIdeInfo);
+    return dependencies.stream()
+        .map(input.targetMap::get)
+        .filter(Objects::nonNull)
+        .anyMatch(d -> shouldCreateModule(d.getAndroidIdeInfo()));
   }
 
   /**
    * Helper function to create an AndroidResourceModule.Builder with initial resource information.
    * The builder is incomplete since it doesn't contain information about dependencies. {@link
-   * getOrCreateResourceModuleBuilder} will aggregate AndroidResourceModule.Builder over its
+   * #getOrCreateResourceModuleBuilder} will aggregate AndroidResourceModule.Builder over its
    * transitive dependencies.
    */
   protected AndroidResourceModule.Builder createResourceModuleBuilder(
@@ -191,7 +234,7 @@ public class BlazeAndroidWorkspaceImporter {
       String libraryKey = libraryFactory.createAarLibrary(target);
       if (libraryKey != null) {
         ArtifactLocation artifactLocation = target.getAndroidAarIdeInfo().getAar();
-        if (isSourceOrWhitelistedGenPath(artifactLocation, whitelistFilter)) {
+        if (isSourceOrAllowedGenPath(artifactLocation, allowlistFilter)) {
           androidResourceModule.addResourceLibraryKey(libraryKey);
         }
       }
@@ -200,16 +243,17 @@ public class BlazeAndroidWorkspaceImporter {
 
     for (AndroidResFolder androidResFolder : androidIdeInfo.getResFolders()) {
       ArtifactLocation artifactLocation = androidResFolder.getRoot();
-      if (isSourceOrWhitelistedGenPath(artifactLocation, whitelistFilter)) {
+      if (isSourceOrAllowedGenPath(artifactLocation, allowlistFilter)) {
         if (shouldCreateFakeAar.test(artifactLocation)) {
           // we are creating aar libraries, and this resource isn't inside the project view
           // so we can skip adding it to the module
           String libraryKey =
-              libraryFactory.createBlazeResourceLibrary(
-                  androidResFolder,
-                  androidIdeInfo.getManifest(),
-                  target.getBuildFile().getRelativePath());
-          androidResourceModule.addResourceLibraryKey(libraryKey);
+              libraryFactory.createAarLibrary(
+                  androidResFolder.getAar(),
+                  BlazeImportUtil.javaResourcePackageFor(target, /* inferPackage = */ true));
+          if (libraryKey != null) {
+            androidResourceModule.addResourceLibraryKey(libraryKey);
+          }
         } else {
           if (shouldCreateModule(androidIdeInfo)) {
             androidResourceModule.addResource(artifactLocation);
@@ -231,19 +275,20 @@ public class BlazeAndroidWorkspaceImporter {
   }
 
   public static boolean shouldGenerateResourceModule(
-      AndroidIdeInfo androidIdeInfo, Predicate<ArtifactLocation> whitelistTester) {
+      AndroidIdeInfo androidIdeInfo, Predicate<ArtifactLocation> allowlistTester) {
     return androidIdeInfo.getResFolders().stream()
         .map(resource -> resource.getRoot())
-        .anyMatch(location -> isSourceOrWhitelistedGenPath(location, whitelistTester));
+        .anyMatch(location -> isSourceOrAllowedGenPath(location, allowlistTester));
   }
 
-  public static boolean isSourceOrWhitelistedGenPath(
+  public static boolean isSourceOrAllowedGenPath(
       ArtifactLocation artifactLocation, Predicate<ArtifactLocation> tester) {
     return artifactLocation.isSource() || tester.test(artifactLocation);
   }
 
   private ImmutableList<AndroidResourceModule> buildAndroidResourceModules(
-      ImmutableList<AndroidResourceModule> inputModules) {
+      ImmutableList<AndroidResourceModule> inputModules,
+      ImmutableList<AndroidResourceModule> workspaceResourceModules) {
     // Filter empty resource modules
     List<AndroidResourceModule> androidResourceModules =
         inputModules.stream()
@@ -281,19 +326,39 @@ public class BlazeAndroidWorkspaceImporter {
         for (AndroidResourceModule androidResourceModule : androidResourceModulesWithJavaPackage) {
           messageBuilder.append("  ").append(androidResourceModule.targetKey).append('\n');
         }
-        String message = messageBuilder.toString();
-        context.accept(new PerformanceWarning(message));
-        context.accept(IssueOutput.warn(message).build());
 
-        result.add(selectBestAndroidResourceModule(androidResourceModulesWithJavaPackage));
+        if (mergeResourcesEnabled.getValue()) {
+          messageBuilder.append("  ").append("Merging Resources...").append("\n");
+          String message = messageBuilder.toString();
+          context.accept(IssueOutput.issue(Category.INFORMATION, message).build());
+
+          result.add(mergeAndroidResourceModules(androidResourceModulesWithJavaPackage));
+        } else {
+          String message = messageBuilder.toString();
+          context.accept(new PerformanceWarning(message));
+          context.accept(IssueOutput.warn(message).build());
+
+          result.add(selectBestAndroidResourceModule(androidResourceModulesWithJavaPackage));
+        }
       }
     }
+    if (!workspaceResourceModules.isEmpty() && workspaceOnlyResourcesEnabled.getValue()) {
+      // Create and add one module for all resources that are visible to .workspace module, but do
+      // not have an attached resource module of their own
 
-    Collections.sort(result, (lhs, rhs) -> lhs.targetKey.compareTo(rhs.targetKey));
+      // We lump all such targets into one module because chances are none of these targets have an
+      // associated manifest. {@link BlazeAndroidProjectStructureSyncer} expects all resource
+      // modules to have an associated target with a manifest, which is a behavior we want to keep.
+      // It makes an exception for this module and attaches the workspace resource module without a
+      // manifest.
+      result.add(createWorkspaceResourceModule(result, workspaceResourceModules));
+    }
+
+    Collections.sort(result, Comparator.comparing(m -> m.targetKey));
     return ImmutableList.copyOf(result);
   }
 
-  private AndroidResourceModule selectBestAndroidResourceModule(
+  private static AndroidResourceModule selectBestAndroidResourceModule(
       Collection<AndroidResourceModule> androidResourceModulesWithJavaPackage) {
     return androidResourceModulesWithJavaPackage.stream()
         .max(
@@ -315,80 +380,73 @@ public class BlazeAndroidWorkspaceImporter {
         .get();
   }
 
+  /**
+   * Creates a {@link AndroidResourceModule} that contains all dependencies of
+   * `workspaceResourceModules` that are not present in `existingModules` without attaching any
+   * sources. This module is meant to link resources used by .workspace module but not by any other
+   * resource modules.
+   */
+  private static AndroidResourceModule createWorkspaceResourceModule(
+      List<AndroidResourceModule> existingModules,
+      ImmutableList<AndroidResourceModule> workspaceResourceModules) {
+
+    Set<ArtifactLocation> newTransitiveResources =
+        workspaceResourceModules.stream()
+            .flatMap(m -> m.transitiveResources.stream())
+            .collect(Collectors.toSet());
+
+    Set<String> newLibraryKeys =
+        workspaceResourceModules.stream()
+            .flatMap(m -> m.resourceLibraryKeys.stream())
+            .collect(toCollection(HashSet::new));
+
+    Set<TargetKey> newResourceDeps =
+        workspaceResourceModules.stream()
+            .flatMap(m -> m.transitiveResourceDependencies.stream())
+            .collect(toCollection(HashSet::new));
+
+    existingModules.forEach(
+        m -> {
+          newTransitiveResources.removeAll(m.transitiveResources);
+          newLibraryKeys.removeAll(m.resourceLibraryKeys);
+          newResourceDeps.removeAll(m.transitiveResourceDependencies);
+        });
+
+    // We add library keys and resource dependencies only. This module should not contain any
+    // resource sources.
+    return AndroidResourceModule.builder(WORKSPACE_RESOURCES_TARGET_KEY)
+        .addTransitiveResources(newTransitiveResources)
+        .addResourceLibraryKeys(newLibraryKeys)
+        .addTransitiveResourceDependencies(newResourceDeps)
+        .build();
+  }
+
+  private static AndroidResourceModule mergeAndroidResourceModules(
+      Collection<AndroidResourceModule> modules) {
+    // Choose the shortest label as the canonical label (arbitrarily chosen from the original
+    // filtering logic)
+    TargetKey targetKey =
+        modules.stream()
+            .map(m -> m.targetKey)
+            .min(Comparator.comparingInt(tk -> tk.toString().length()))
+            .get();
+
+    AndroidResourceModule.Builder moduleBuilder = AndroidResourceModule.builder(targetKey);
+    modules.forEach(
+        m ->
+            moduleBuilder
+                .addResources(m.resources)
+                .addTransitiveResources(m.transitiveResources)
+                .addResourceLibraryKeys(m.resourceLibraryKeys)
+                .addTransitiveResourceDependencies(m.transitiveResourceDependencies));
+    return moduleBuilder.build();
+  }
+
   static class LibraryFactory {
     private Map<String, AarLibrary> aarLibraries = new HashMap<>();
-    private Map<String, BlazeResourceLibrary.Builder> resourceLibraries = new HashMap<>();
-    private final Map<ArtifactLocation, String> resFolderToBuildFile = new HashMap<>();
 
     public ImmutableMap<String, AarLibrary> getAarLibs() {
       return ImmutableMap.copyOf(aarLibraries);
-    }
-
-    public ImmutableMap<String, BlazeResourceLibrary> getBlazeResourceLibs() {
-      ImmutableMap.Builder<String, BlazeResourceLibrary> builder = ImmutableMap.builder();
-      for (Map.Entry<String, BlazeResourceLibrary.Builder> entry : resourceLibraries.entrySet()) {
-        builder.put(entry.getKey(), entry.getValue().build());
-      }
-      return builder.build();
-    }
-
-    /**
-     * Creates a new BlazeResourceLibrary, or locates an existing one if one already existed for
-     * this location. Returns the library key for the library.
-     */
-    @NotNull
-    private String createBlazeResourceLibrary(
-        @NotNull ArtifactLocation root,
-        @NotNull Set<String> resources,
-        @Nullable ArtifactLocation manifestLocation,
-        @Nullable String buildFile) {
-      String libraryKey = BlazeResourceLibrary.libraryNameFromArtifactLocation(root);
-      BlazeResourceLibrary.Builder library = resourceLibraries.get(libraryKey);
-      ArtifactLocation existedManifestLocation = library == null ? null : library.getManifest();
-      if (!Objects.equals(existedManifestLocation, manifestLocation)) {
-        // For each target, it's hard to tell whether a manifest file is specific for a resource
-        // since targets are allowed have same resource directory but different manifest files.
-        // So for a target, we have the following assumption
-        // 1. A target's manifest file may be specific for its resource when its resource folder and
-        // its BUILD file are under same directory
-        // 2. If multiple targets meet requirement 1, the closest to resource folder wins
-        if (buildFile == null || manifestLocation == null) {
-          manifestLocation = existedManifestLocation;
-        } else {
-          String buildFileParent = buildFile.split("/BUILD", -1)[0];
-          if (root.getRelativePath().startsWith(buildFileParent)
-              && buildFileParent.startsWith(
-                  resFolderToBuildFile.getOrDefault(root, buildFileParent))) {
-            resFolderToBuildFile.put(root, buildFileParent);
-          } else if (existedManifestLocation != null) {
-            manifestLocation = existedManifestLocation;
-          }
-        }
-      }
-      if (library == null) {
-        library = new BlazeResourceLibrary.Builder().setRoot(root).setManifest(manifestLocation);
-        resourceLibraries.put(libraryKey, library);
-      }
-      library.addResources(resources);
-      library.setManifest(manifestLocation);
-      return libraryKey;
-    }
-
-    @NotNull
-    public String createBlazeResourceLibrary(
-        @NotNull ArtifactLocation root,
-        @Nullable ArtifactLocation manifestLocation,
-        @Nullable String buildFile) {
-      return createBlazeResourceLibrary(root, ImmutableSet.of(), manifestLocation, buildFile);
-    }
-
-    @NotNull
-    public String createBlazeResourceLibrary(
-        @NotNull AndroidResFolder androidResFolder,
-        @Nullable ArtifactLocation manifestLocation,
-        @Nullable String buildFile) {
-      return createBlazeResourceLibrary(
-          androidResFolder.getRoot(), androidResFolder.getResources(), manifestLocation, buildFile);
     }
 
     /**
@@ -397,7 +455,7 @@ public class BlazeAndroidWorkspaceImporter {
      * for this target.
      */
     @Nullable
-    public String createAarLibrary(@NotNull TargetIdeInfo target) {
+    private String createAarLibrary(@NotNull TargetIdeInfo target) {
       // NOTE: we are not doing jdeps optimization, even though we have the jdeps data for the AAR's
       // jar. The aar might still have resources that are used (e.g., @string/foo in .xml), and we
       // don't have the equivalent of jdeps data.
@@ -407,13 +465,37 @@ public class BlazeAndroidWorkspaceImporter {
         return null;
       }
 
+      String resourcePackage =
+          BlazeImportUtil.javaResourcePackageFor(target, /* inferPackage = */ true);
+
       String libraryKey =
           LibraryKey.libraryNameFromArtifactLocation(target.getAndroidAarIdeInfo().getAar());
       if (!aarLibraries.containsKey(libraryKey)) {
         // aar_import should only have one jar (a merged jar from the AAR's jars).
         LibraryArtifact firstJar = target.getJavaIdeInfo().getJars().iterator().next();
         aarLibraries.put(
-            libraryKey, new AarLibrary(firstJar, target.getAndroidAarIdeInfo().getAar()));
+            libraryKey,
+            new AarLibrary(firstJar, target.getAndroidAarIdeInfo().getAar(), resourcePackage));
+      }
+      return libraryKey;
+    }
+
+    /**
+     * Creates a new Aar library for this ArtifactLocation. Returns the key for the library or null
+     * if no aar exists for this target. Note that this function is designed for aar created by
+     * aspect which does not contains class jar. Mistakenly using this function for normal aar
+     * imported by user will fail to cache jar file in this Aar.
+     */
+    @Nullable
+    private String createAarLibrary(
+        @Nullable ArtifactLocation aar, @Nullable String resourcePackage) {
+      if (aar == null) {
+        return null;
+      }
+      String libraryKey = LibraryKey.libraryNameFromArtifactLocation(aar);
+      if (!aarLibraries.containsKey(libraryKey)) {
+        // aar_import should only have one jar (a merged jar from the AAR's jars).
+        aarLibraries.put(libraryKey, new AarLibrary(aar, resourcePackage));
       }
       return libraryKey;
     }

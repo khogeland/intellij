@@ -91,7 +91,7 @@ public interface BuildSystemProvider {
   default boolean syncingRemotely() {
     // TODO(brendandouglas): make this configurable based on context, move somewhere more
     // appropriate
-    return getSyncBinaryType() == BuildBinaryType.RABBIT;
+    return getSyncBinaryType().isRemote;
   }
 
   WorkspaceRootProvider getWorkspaceRootProvider();
@@ -121,6 +121,9 @@ public interface BuildSystemProvider {
    * both BUILD and BUILD.bazel exist in a directory, bazel ignores the former).
    */
   ImmutableList<String> possibleBuildFileNames();
+
+  /** The WORKSPACE file in the repository root. */
+  ImmutableList<String> possibleWorkspaceFileNames();
 
   /** Check if the given filename is a valid BUILD file name. */
   default boolean isBuildFile(String fileName) {
@@ -162,7 +165,8 @@ public interface BuildSystemProvider {
   default ImmutableList<FileNameMatcher> buildLanguageFileTypeMatchers() {
     ImmutableList.Builder<FileNameMatcher> list = ImmutableList.builder();
     possibleBuildFileNames().forEach(s -> list.add(new ExactFileNameMatcher(s)));
-    list.add(new ExtensionFileNameMatcher("bzl"), new ExactFileNameMatcher("WORKSPACE"));
+    possibleWorkspaceFileNames().forEach(s -> list.add(new ExactFileNameMatcher(s)));
+    list.add(new ExtensionFileNameMatcher("bzl"));
     return list.build();
   }
 

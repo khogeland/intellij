@@ -28,7 +28,7 @@ import com.google.idea.blaze.base.model.primitives.Label;
 import com.google.idea.blaze.base.model.primitives.TargetExpression;
 import com.google.idea.blaze.base.model.primitives.WorkspacePath;
 import com.google.idea.blaze.base.run.BlazeCommandRunConfiguration;
-import com.google.idea.blaze.base.run.producer.BlazeRunConfigurationProducerTestCase;
+import com.google.idea.blaze.base.run.producers.BlazeRunConfigurationProducerTestCase;
 import com.google.idea.blaze.base.run.producers.TestContextRunConfigurationProducer;
 import com.google.idea.blaze.base.run.state.BlazeCommandRunConfigurationCommonState;
 import com.google.idea.blaze.base.sync.data.BlazeProjectDataManager;
@@ -38,6 +38,7 @@ import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiMethod;
 import java.util.ArrayList;
 import java.util.List;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -47,8 +48,27 @@ import org.junit.runners.JUnit4;
 public class BlazeJavaTestMethodConfigurationProducerTest
     extends BlazeRunConfigurationProducerTestCase {
 
+  @Before
+  public final void setup() {
+    // required for IntelliJ to recognize annotations, JUnit version, etc.
+    workspace.createPsiFile(
+        new WorkspacePath("org/junit/runner/RunWith.java"),
+        "package org.junit.runner;"
+            + "public @interface RunWith {"
+            + "    Class<? extends Runner> value();"
+            + "}");
+    workspace.createPsiFile(
+        new WorkspacePath("org/junit/Test.java"),
+        "package org.junit;",
+        "public @interface Test {}");
+    workspace.createPsiFile(
+        new WorkspacePath("org/junit/runners/JUnit4.java"),
+        "package org.junit.runners;",
+        "public class JUnit4 {}");
+  }
+
   @Test
-  public void testProducedFromPsiMethod() {
+  public void testProducedFromPsiMethod() throws Throwable {
     // Arrange
     PsiFile javaFile =
         createAndIndexFile(
@@ -86,8 +106,8 @@ public class BlazeJavaTestMethodConfigurationProducerTest
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//java/com/google/test:TestClass"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//java/com/google/test:TestClass"));
     assertThat(getTestFilterContents(config))
         .isEqualTo("--test_filter=com.google.test.TestClass#testMethod1$");
     assertThat(config.getName()).isEqualTo("Blaze test TestClass.testMethod1");
@@ -99,7 +119,7 @@ public class BlazeJavaTestMethodConfigurationProducerTest
   }
 
   @Test
-  public void testConfigFromContextRecognizesItsOwnConfig() {
+  public void testConfigFromContextRecognizesItsOwnConfig() throws Throwable {
     PsiMethod method = setupGenericJunitTestClassAndBlazeTarget();
     ConfigurationContext context = createContextFromPsi(method);
     BlazeCommandRunConfiguration config =
@@ -112,7 +132,7 @@ public class BlazeJavaTestMethodConfigurationProducerTest
   }
 
   @Test
-  public void testConfigWithDifferentLabelIsIgnored() {
+  public void testConfigWithDifferentLabelIsIgnored() throws Throwable {
     // Arrange
     PsiMethod method = setupGenericJunitTestClassAndBlazeTarget();
     ConfigurationContext context = createContextFromPsi(method);
@@ -130,7 +150,7 @@ public class BlazeJavaTestMethodConfigurationProducerTest
   }
 
   @Test
-  public void testConfigWithDifferentFilterIgnored() {
+  public void testConfigWithDifferentFilterIgnored() throws Throwable {
     // Arrange
     PsiMethod method = setupGenericJunitTestClassAndBlazeTarget();
     ConfigurationContext context = createContextFromPsi(method);
@@ -158,7 +178,7 @@ public class BlazeJavaTestMethodConfigurationProducerTest
    * class. Used when the implementation details (class name, target string, etc.) aren't relevant
    * to the test.
    */
-  private PsiMethod setupGenericJunitTestClassAndBlazeTarget() {
+  private PsiMethod setupGenericJunitTestClassAndBlazeTarget() throws Throwable {
     PsiFile javaFile =
         createAndIndexFile(
             new WorkspacePath("java/com/google/test/TestClass.java"),

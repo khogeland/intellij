@@ -2,8 +2,6 @@
 # Description: Builds ASwB for blaze and bazel
 #
 
-licenses(["notice"])  # Apache 2.0
-
 load(
     "//build_defs:build_defs.bzl",
     "intellij_plugin",
@@ -24,6 +22,8 @@ load(
     "intellij_integration_test_suite",
     "intellij_unit_test_suite",
 )
+
+licenses(["notice"])  # Apache 2.0
 
 optional_plugin_xml(
     name = "optional_ndk_xml",
@@ -55,6 +55,7 @@ java_library(
     srcs = glob(["tests/utils/unit/**/*.java"]),
     deps = [
         ":aswb_lib",
+        "//base",
         "//intellij_platform_sdk:plugin_api_for_tests",
         "//intellij_platform_sdk:test_libs",
     ],
@@ -63,9 +64,11 @@ java_library(
 java_library(
     name = "integration_test_utils",
     testonly = 1,
-    srcs = glob(["tests/utils/integration/**/*.java"]),
+    srcs = glob(["tests/utils/integration/**/*.java"]) + select_for_plugin_api({
+        "android-studio-4.2": glob(["tests/utils/sdkcompat/as42/com/android/sdklib/repository/*.java"]),
+        "android-studio-2020.3": glob(["tests/utils/sdkcompat/as203/com/android/sdklib/repository/*.java"]),
+    }),
     deps = [
-        ":aswb_lib",
         "//base",
         "//base:integration_test_utils",
         "//base:unit_test_utils",
@@ -82,15 +85,15 @@ java_library(
 java_library(
     name = "aswb_lib",
     srcs = glob(["src/**/*.java"]) + select_for_plugin_api({
-        "android-studio-3.5": glob(["sdkcompat/as35/**/*.java"]),
-        "android-studio-3.6": glob(["sdkcompat/as36/**/*.java"]),
-        "android-studio-4.0": glob(["sdkcompat/as40/**/*.java"]),
+        "android-studio-4.2": glob(["sdkcompat/as42/**/*.java"]),
+        "android-studio-2020.3": glob(["sdkcompat/as203/**/*.java"]),
     }),
     resources = glob(["resources/**/*"]),
     deps = [
         "//base",
         "//common/experiments",
         "//intellij_platform_sdk:jsr305",
+        "//intellij_platform_sdk:kotlin",
         "//intellij_platform_sdk:plugin_api",
         "//java",
         "//proto:proto_deps",
@@ -100,7 +103,10 @@ java_library(
 
 intellij_unit_test_suite(
     name = "unit_tests",
-    srcs = glob(["tests/unittests/**/*.java"]),
+    srcs = glob(
+        ["tests/unittests/**/*.java"],
+        exclude = ["tests/unittests/com/google/idea/blaze/android/sync/model/idea/BlazeAndroidModelTest.java"],  # b/145809318
+    ),
     test_package_root = "com.google.idea.blaze.android",
     deps = [
         ":aswb_lib",
@@ -114,6 +120,7 @@ intellij_unit_test_suite(
         "//intellij_platform_sdk:test_libs",
         "//java",
         "//proto:proto_deps",
+        "//testing:lib",
         "@junit//jar",
     ],
 )
@@ -121,21 +128,32 @@ intellij_unit_test_suite(
 test_suite(
     name = "integration_tests",
     tests = [
-        ":NdkDependenciesTest",
+        #b/139825934 ":NdkDependenciesTest",
         ":normal_integration_tests",
     ],
 )
 
 intellij_integration_test_suite(
     name = "normal_integration_tests",
-    srcs = glob(
-        ["tests/integrationtests/**/*.java"],
-        exclude = [
-            "tests/integrationtests/com/google/idea/blaze/android/plugin/NdkDependenciesTest.java",
-            "tests/integrationtests/com/google/idea/blaze/android/functional/AswbMergedManifestTest.java",
-            "tests/integrationtests/com/google/idea/blaze/android/AswbGotoDeclarationTest.java",
-        ],
-    ),
+    srcs = select_for_plugin_api({
+        "android-studio-4.2": glob(
+            ["tests/integrationtests/**/*.java"],
+            exclude = [
+                "tests/integrationtests/com/google/idea/blaze/android/plugin/NdkDependenciesTest.java",  # Extracted to separate target
+            ],
+        ),
+        "android-studio-2020.3": glob(
+            ["tests/integrationtests/**/*.java"],
+            exclude = [
+                "tests/integrationtests/com/google/idea/blaze/android/plugin/NdkDependenciesTest.java",  # Extracted to separate target
+                "tests/integrationtests/com/google/idea/blaze/android/functional/AswbRenderTaskTest.java",  # b/177371104
+            ],
+        ),
+    }),
+    data = [
+        "testdata/golden.png",
+        "testdata/ic_banner.png",
+    ],
     required_plugins = "com.google.idea.bazel.aswb",
     test_package_root = "com.google.idea.blaze.android",
     runtime_deps = [
@@ -153,12 +171,10 @@ intellij_integration_test_suite(
         "//common/experiments",
         "//common/experiments:unit_test_utils",
         "//cpp",
-        "//intellij_platform_sdk:jsr305",
         "//intellij_platform_sdk:plugin_api_for_tests",
         "//intellij_platform_sdk:test_libs",
         "//java",
         "//proto:proto_deps",
-        "//sdkcompat",
         "@junit//jar",
     ],
 )

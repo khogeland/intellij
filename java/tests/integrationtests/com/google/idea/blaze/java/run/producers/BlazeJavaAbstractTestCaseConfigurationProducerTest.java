@@ -26,7 +26,7 @@ import com.google.idea.blaze.base.model.MockBlazeProjectDataManager;
 import com.google.idea.blaze.base.model.primitives.TargetExpression;
 import com.google.idea.blaze.base.model.primitives.WorkspacePath;
 import com.google.idea.blaze.base.run.BlazeCommandRunConfiguration;
-import com.google.idea.blaze.base.run.producer.BlazeRunConfigurationProducerTestCase;
+import com.google.idea.blaze.base.run.producers.BlazeRunConfigurationProducerTestCase;
 import com.google.idea.blaze.base.sync.data.BlazeProjectDataManager;
 import com.intellij.execution.actions.ConfigurationContext;
 import com.intellij.execution.actions.ConfigurationFromContext;
@@ -37,6 +37,7 @@ import com.intellij.psi.PsiClassOwner;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiMethod;
 import java.util.List;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -46,8 +47,27 @@ import org.junit.runners.JUnit4;
 public class BlazeJavaAbstractTestCaseConfigurationProducerTest
     extends BlazeRunConfigurationProducerTestCase {
 
+  @Before
+  public final void setup() {
+    // required for IntelliJ to recognize annotations, JUnit version, etc.
+    workspace.createPsiFile(
+        new WorkspacePath("org/junit/runner/RunWith.java"),
+        "package org.junit.runner;"
+            + "public @interface RunWith {"
+            + "    Class<? extends Runner> value();"
+            + "}");
+    workspace.createPsiFile(
+        new WorkspacePath("org/junit/Test.java"),
+        "package org.junit;",
+        "public @interface Test {}");
+    workspace.createPsiFile(
+        new WorkspacePath("org/junit/runners/JUnit4.java"),
+        "package org.junit.runners;",
+        "public class JUnit4 {}");
+  }
+
   @Test
-  public void testIgnoreTestClassWithNoTestSubclasses() {
+  public void testIgnoreTestClassWithNoTestSubclasses() throws Throwable {
     PsiFile javaFile =
         createAndIndexFile(
             new WorkspacePath("java/com/google/test/TestClass.java"),
@@ -71,7 +91,7 @@ public class BlazeJavaAbstractTestCaseConfigurationProducerTest
   }
 
   @Test
-  public void testIgnoreAbstractTestClassWithNoTestSubclasses() {
+  public void testIgnoreAbstractTestClassWithNoTestSubclasses() throws Throwable {
     PsiFile javaFile =
         createAndIndexFile(
             new WorkspacePath("java/com/google/test/TestClass.java"),
@@ -95,7 +115,7 @@ public class BlazeJavaAbstractTestCaseConfigurationProducerTest
   }
 
   @Test
-  public void testHandlesNonAbstractClassWithTestSubclass() {
+  public void testHandlesNonAbstractClassWithTestSubclass() throws Throwable {
     workspace.createPsiDirectory(new WorkspacePath("java/com/google/test"));
     PsiFile superClassFile =
         createAndIndexFile(
@@ -132,13 +152,13 @@ public class BlazeJavaAbstractTestCaseConfigurationProducerTest
     RunConfiguration config = fromContext.getConfiguration();
     assertThat(config).isInstanceOf(BlazeCommandRunConfiguration.class);
     BlazeCommandRunConfiguration blazeConfig = (BlazeCommandRunConfiguration) config;
-    assertThat(blazeConfig.getTarget()).isNull();
+    assertThat(blazeConfig.getTargets()).isEmpty();
     assertThat(blazeConfig.getName())
         .isEqualTo("Choose subclass for NonAbstractSuperClassTestCase");
   }
 
   @Test
-  public void testConfigurationCreatedFromAbstractClass() {
+  public void testConfigurationCreatedFromAbstractClass() throws Throwable {
     workspace.createPsiDirectory(new WorkspacePath("java/com/google/test"));
     PsiFile abstractClassFile =
         createAndIndexFile(
@@ -173,7 +193,7 @@ public class BlazeJavaAbstractTestCaseConfigurationProducerTest
     RunConfiguration config = fromContext.getConfiguration();
     assertThat(config).isInstanceOf(BlazeCommandRunConfiguration.class);
     BlazeCommandRunConfiguration blazeConfig = (BlazeCommandRunConfiguration) config;
-    assertThat(blazeConfig.getTarget()).isNull();
+    assertThat(blazeConfig.getTargets()).isEmpty();
     assertThat(blazeConfig.getName()).isEqualTo("Choose subclass for AbstractTestCase");
 
     MockBlazeProjectDataBuilder builder = MockBlazeProjectDataBuilder.builder(workspaceRoot);
@@ -192,14 +212,14 @@ public class BlazeJavaAbstractTestCaseConfigurationProducerTest
     BlazeJavaAbstractTestCaseConfigurationProducer.chooseSubclass(
         fromContext, context, EmptyRunnable.INSTANCE);
 
-    assertThat(blazeConfig.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//java/com/google/test:TestClass"));
+    assertThat(blazeConfig.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//java/com/google/test:TestClass"));
     assertThat(getTestFilterContents(blazeConfig))
         .isEqualTo(BlazeFlags.TEST_FILTER + "=com.google.test.TestClass#");
   }
 
   @Test
-  public void testConfigurationCreatedFromMethodInAbstractClass() {
+  public void testConfigurationCreatedFromMethodInAbstractClass() throws Throwable {
     PsiFile abstractClassFile =
         createAndIndexFile(
             new WorkspacePath("java/com/google/test/AbstractTestCase.java"),
@@ -234,7 +254,7 @@ public class BlazeJavaAbstractTestCaseConfigurationProducerTest
     RunConfiguration config = fromContext.getConfiguration();
     assertThat(config).isInstanceOf(BlazeCommandRunConfiguration.class);
     BlazeCommandRunConfiguration blazeConfig = (BlazeCommandRunConfiguration) config;
-    assertThat(blazeConfig.getTarget()).isNull();
+    assertThat(blazeConfig.getTargets()).isEmpty();
     assertThat(blazeConfig.getName()).isEqualTo("Choose subclass for AbstractTestCase.testMethod");
 
     MockBlazeProjectDataBuilder builder = MockBlazeProjectDataBuilder.builder(workspaceRoot);
@@ -253,8 +273,8 @@ public class BlazeJavaAbstractTestCaseConfigurationProducerTest
     BlazeJavaAbstractTestCaseConfigurationProducer.chooseSubclass(
         fromContext, context, EmptyRunnable.INSTANCE);
 
-    assertThat(blazeConfig.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//java/com/google/test:TestClass"));
+    assertThat(blazeConfig.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//java/com/google/test:TestClass"));
     assertThat(getTestFilterContents(blazeConfig))
         .isEqualTo(BlazeFlags.TEST_FILTER + "=com.google.test.TestClass#testMethod$");
   }

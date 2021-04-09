@@ -24,13 +24,12 @@ import com.google.idea.blaze.base.model.MockBlazeProjectDataManager;
 import com.google.idea.blaze.base.model.primitives.Label;
 import com.google.idea.blaze.base.run.BlazeCommandRunConfiguration.BlazeCommandRunConfigurationSettingsEditor;
 import com.google.idea.blaze.base.sync.data.BlazeProjectDataManager;
-import com.google.idea.sdkcompat.run.RunManagerCompat;
 import com.intellij.execution.RunnerAndConfigurationSettings;
 import com.intellij.execution.configurations.ConfigurationType;
 import com.intellij.execution.configurations.RunConfiguration;
 import com.intellij.execution.impl.RunManagerImpl;
-import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.util.Disposer;
+import java.util.List;
 import org.jdom.Element;
 import org.jdom.output.Format;
 import org.jdom.output.XMLOutputter;
@@ -48,21 +47,23 @@ import org.junit.runners.JUnit4;
 public class BlazeCommandRunConfigurationRunManagerImplTest extends BlazeIntegrationTestCase {
 
   private RunManagerImpl runManager;
-  private BlazeCommandRunConfigurationType type;
+  private Element defaultRunManagerState;
   private BlazeCommandRunConfiguration configuration;
 
   @Before
   public final void doSetup() {
     runManager = RunManagerImpl.getInstanceImpl(getProject());
+    defaultRunManagerState = runManager.getState();
     // Without BlazeProjectData, the configuration editor is always disabled.
     BlazeProjectDataManager mockProjectDataManager =
         new MockBlazeProjectDataManager(MockBlazeProjectDataBuilder.builder(workspaceRoot).build());
     registerProjectService(BlazeProjectDataManager.class, mockProjectDataManager);
-    type = BlazeCommandRunConfigurationType.getInstance();
+    BlazeCommandRunConfigurationType type = BlazeCommandRunConfigurationType.getInstance();
 
     RunnerAndConfigurationSettings runnerAndConfigurationSettings =
         runManager.createConfiguration("Blaze Configuration", type.getFactory());
-    runManager.addConfiguration(runnerAndConfigurationSettings, false);
+    runnerAndConfigurationSettings.storeInLocalWorkspace();
+    runManager.addConfiguration(runnerAndConfigurationSettings);
     configuration =
         (BlazeCommandRunConfiguration) runnerAndConfigurationSettings.getConfiguration();
   }
@@ -70,17 +71,11 @@ public class BlazeCommandRunConfigurationRunManagerImplTest extends BlazeIntegra
   @After
   public final void doTeardown() {
     runManager.clearAll();
-
-    // Workaround to force commit pending scheme file deletions.  Without this, uncommitted
-    // file deletions can occur during later tests and cause unexpected behaviour.
-    // This works because runManager.getState() triggers a save operation on SchemeManagerImpl,
-    // which commits any pending file operations. (b/127677541)
-    runManager.getState();
-
+    runManager.loadState(defaultRunManagerState);
     // We don't need to do this at setup, because it is handled by RunManagerImpl's constructor.
     // However, clearAll() clears the configuration types, so we need to reinitialize them.
-    RunManagerCompat.initializeConfigurationTypes(
-        runManager, ConfigurationType.CONFIGURATION_TYPE_EP);
+    runManager.initializeConfigurationTypes(
+        ConfigurationType.CONFIGURATION_TYPE_EP.getExtensionList());
   }
 
   @Test
@@ -90,13 +85,13 @@ public class BlazeCommandRunConfigurationRunManagerImplTest extends BlazeIntegra
 
     final Element element = runManager.getState();
     runManager.loadState(element);
-    final RunConfiguration[] configurations = runManager.getAllConfigurations();
-    assertThat(configurations).hasLength(1);
-    assertThat(configurations[0]).isInstanceOf(BlazeCommandRunConfiguration.class);
+    final List<RunConfiguration> configurations = runManager.getAllConfigurationsList();
+    assertThat(configurations).hasSize(1);
+    assertThat(configurations.get(0)).isInstanceOf(BlazeCommandRunConfiguration.class);
     final BlazeCommandRunConfiguration readConfiguration =
-        (BlazeCommandRunConfiguration) configurations[0];
+        (BlazeCommandRunConfiguration) configurations.get(0);
 
-    assertThat(readConfiguration.getTarget()).isEqualTo(label);
+    assertThat(readConfiguration.getTargets()).containsExactly(label);
   }
 
   @Test
@@ -121,7 +116,7 @@ public class BlazeCommandRunConfigurationRunManagerImplTest extends BlazeIntegra
     final Element initialElement = runManager.getState();
     runManager.loadState(initialElement);
     final BlazeCommandRunConfiguration modifiedConfiguration =
-        (BlazeCommandRunConfiguration) runManager.getAllConfigurations()[0];
+        (BlazeCommandRunConfiguration) runManager.getAllConfigurationsList().get(0);
     modifiedConfiguration.setTarget(Label.create("//new:label"));
 
     final Element modifiedElement = runManager.getState();
@@ -129,7 +124,7 @@ public class BlazeCommandRunConfigurationRunManagerImplTest extends BlazeIntegra
         .isNotEqualTo(xmlOutputter.outputString(initialElement));
     runManager.loadState(modifiedElement);
     final BlazeCommandRunConfiguration revertedConfiguration =
-        (BlazeCommandRunConfiguration) runManager.getAllConfigurations()[0];
+        (BlazeCommandRunConfiguration) runManager.getAllConfigurationsList().get(0);
     revertedConfiguration.setTarget(label);
 
     final Element revertedElement = runManager.getState();
@@ -138,8 +133,7 @@ public class BlazeCommandRunConfigurationRunManagerImplTest extends BlazeIntegra
   }
 
   @Test
-  public void getStateElementShouldMatchAfterEditorApplyToAndResetFrom()
-      throws ConfigurationException {
+  public void getStateElementShouldMatchAfterEditorApplyToAndResetFrom() {
     final XMLOutputter xmlOutputter = new XMLOutputter(Format.getCompactFormat());
     final BlazeCommandRunConfigurationSettingsEditor editor =
         new BlazeCommandRunConfigurationSettingsEditor(configuration);

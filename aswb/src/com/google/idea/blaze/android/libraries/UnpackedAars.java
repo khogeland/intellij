@@ -25,6 +25,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.idea.blaze.android.sync.model.AarLibrary;
+import com.google.idea.blaze.base.async.FutureUtil;
 import com.google.idea.blaze.base.command.buildresult.BlazeArtifact;
 import com.google.idea.blaze.base.command.buildresult.BlazeArtifact.LocalFileArtifact;
 import com.google.idea.blaze.base.command.buildresult.OutputArtifact;
@@ -37,10 +38,12 @@ import com.google.idea.blaze.base.model.BlazeLibrary;
 import com.google.idea.blaze.base.model.BlazeProjectData;
 import com.google.idea.blaze.base.model.RemoteOutputArtifacts;
 import com.google.idea.blaze.base.prefetch.FetchExecutor;
+import com.google.idea.blaze.base.prefetch.RemoteArtifactPrefetcher;
 import com.google.idea.blaze.base.projectview.ProjectViewManager;
 import com.google.idea.blaze.base.projectview.ProjectViewSet;
 import com.google.idea.blaze.base.scope.BlazeContext;
 import com.google.idea.blaze.base.scope.output.PrintOutput;
+import com.google.idea.blaze.base.scope.scopes.TimingScope.EventType;
 import com.google.idea.blaze.base.settings.BlazeImportSettings;
 import com.google.idea.blaze.base.settings.BlazeImportSettingsManager;
 import com.google.idea.blaze.base.sync.SyncMode;
@@ -95,6 +98,7 @@ import javax.annotation.Nullable;
 public class UnpackedAars {
   private static final Logger logger = Logger.getInstance(UnpackedAars.class);
 
+  private final Project project;
   private final File cacheDir;
 
   /** The state of the cache as of the last call to {@link #readFileState}. */
@@ -107,14 +111,24 @@ public class UnpackedAars {
   public UnpackedAars(Project project) {
     BlazeImportSettings importSettings =
         BlazeImportSettingsManager.getInstance(project).getImportSettings();
+    this.project = project;
     this.cacheDir = getCacheDir(importSettings);
+  }
+
+  @VisibleForTesting
+  public File getCacheDir() {
+    return this.cacheDir;
+  }
+
+  private static File getCacheDir(BlazeImportSettings importSettings) {
+    return new File(BlazeDataStorage.getProjectDataDir(importSettings), "aar_libraries");
   }
 
   private static class AarAndJar {
     private final BlazeArtifact aar;
-    private final BlazeArtifact jar;
+    @Nullable private final BlazeArtifact jar;
 
-    AarAndJar(BlazeArtifact aar, BlazeArtifact jar) {
+    AarAndJar(BlazeArtifact aar, @Nullable BlazeArtifact jar) {
       this.aar = aar;
       this.jar = jar;
     }
@@ -166,6 +180,17 @@ public class UnpackedAars {
 
       Set<String> updatedKeys =
           FileCacheDiffer.findUpdatedOutputs(aarOutputs, cacheFiles, previousOutputs).keySet();
+      Set<BlazeArtifact> artifactsToDownload = new HashSet<>();
+
+      for (String key : updatedKeys) {
+        artifactsToDownload.add(projectState.get(key).aar);
+        BlazeArtifact jar = projectState.get(key).jar;
+        // jar file is introduced as a separate artifact (not jar in aar) which asks to download
+        // separately. Only update jar when we decide that aar need to be updated.
+        if (jar != null) {
+          artifactsToDownload.add(jar);
+        }
+      }
 
       Set<String> removedKeys = new HashSet<>();
       if (removeMissingFiles) {
@@ -174,6 +199,18 @@ public class UnpackedAars {
                 .filter(file -> !projectState.containsKey(file))
                 .collect(toImmutableSet());
       }
+
+      // Prefetch all libraries to local before reading and copying content
+      ListenableFuture<?> downloadArtifactsFuture =
+          RemoteArtifactPrefetcher.getInstance()
+              .downloadArtifacts(
+                  /* projectName= */ project.getName(),
+                  /* outputArtifacts= */ BlazeArtifact.getRemoteArtifacts(artifactsToDownload));
+
+      FutureUtil.waitForFuture(context, downloadArtifactsFuture)
+          .timed("FetchAars", EventType.Prefetching)
+          .withProgressMessage("Fetching aar files...")
+          .run();
 
       // update cache files, and remove files if required
       List<ListenableFuture<?>> futures = new ArrayList<>(copyLocally(projectState, updatedKeys));
@@ -201,15 +238,29 @@ public class UnpackedAars {
   }
 
   /** Returns the merged jar derived from an AAR, in the unpacked AAR directory. */
+  @Nullable
   public File getClassJar(ArtifactLocationDecoder decoder, AarLibrary library) {
+    if (library.libraryArtifact == null) {
+      return null;
+    }
     ImmutableMap<String, File> cacheState = this.cacheState;
     BlazeArtifact artifact = decoder.resolveOutput(library.libraryArtifact.jarForIntellijLibrary());
     if (cacheState.isEmpty()) {
+      logger.warn("Cache state is empty");
       return getFallbackFile(artifact);
     }
     String cacheKey = cacheKeyForAar(decoder.resolveOutput(library.aarArtifact));
     // check if it was actually cached
     if (!cacheState.containsKey(cacheKey)) {
+      // if artifact is RemoteOutputArtifact, cacheState is expected to contains cacheKey. So it's
+      // unexpected when it runs into this case.
+      if (artifact instanceof RemoteOutputArtifact) {
+        logger.warn(
+            String.format(
+                "Fail to look up %s from cache state for library [aarArtifact = %s, jar = %s]",
+                cacheKey, decoder.resolveOutput(library.aarArtifact), artifact));
+        logger.debug("Cache state contains the following keys: " + cacheState.keySet());
+      }
       return getFallbackFile(artifact);
     }
     return jarFileForKey(cacheKey);
@@ -273,7 +324,7 @@ public class UnpackedAars {
     FileOperationProvider fileOperationProvider = FileOperationProvider.getInstance();
     if (fileOperationProvider.exists(cacheDir)) {
       try {
-        fileOperationProvider.deleteRecursively(cacheDir);
+        fileOperationProvider.deleteRecursively(cacheDir, true);
       } catch (IOException e) {
         logger.warn("Failed to clear unpacked AAR directory: " + cacheDir, e);
       }
@@ -305,10 +356,6 @@ public class UnpackedAars {
   private static String cacheKeyInternal(String key) {
     String name = FileUtil.getNameWithoutExtension(PathUtil.getFileName(key));
     return name + "_" + Integer.toHexString(key.hashCode());
-  }
-
-  private static File getCacheDir(BlazeImportSettings importSettings) {
-    return new File(BlazeDataStorage.getProjectDataDir(importSettings), "aar_libraries");
   }
 
   static class FileCacheAdapter implements FileCache {
@@ -370,7 +417,10 @@ public class UnpackedAars {
     Map<String, AarAndJar> outputs = new HashMap<>();
     for (AarLibrary library : aarLibraries) {
       BlazeArtifact aar = decoder.resolveOutput(library.aarArtifact);
-      BlazeArtifact jar = decoder.resolveOutput(library.libraryArtifact.jarForIntellijLibrary());
+      BlazeArtifact jar =
+          library.libraryArtifact != null
+              ? decoder.resolveOutput(library.libraryArtifact.jarForIntellijLibrary())
+              : null;
       outputs.put(cacheKeyForAar(aar), new AarAndJar(aar, jar));
     }
     return ImmutableMap.copyOf(outputs);
@@ -417,7 +467,7 @@ public class UnpackedAars {
     File aarDir = aarDirForKey(cacheKey);
     try {
       if (ops.exists(aarDir)) {
-        ops.deleteRecursively(aarDir);
+        ops.deleteRecursively(aarDir, true);
       }
       ops.mkdirs(aarDir);
       // TODO(brendandouglas): decompress via ZipInputStream so we don't require a local file
@@ -431,10 +481,12 @@ public class UnpackedAars {
       createStampFile(ops, aarDir, aarAndJar.aar);
 
       // copy merged jar
-      try (InputStream stream = aarAndJar.jar.getInputStream()) {
-        Path destination = Paths.get(jarFileForKey(cacheKey).getPath());
-        ops.mkdirs(destination.getParent().toFile());
-        Files.copy(stream, destination, StandardCopyOption.REPLACE_EXISTING);
+      if (aarAndJar.jar != null) {
+        try (InputStream stream = aarAndJar.jar.getInputStream()) {
+          Path destination = Paths.get(jarFileForKey(cacheKey).getPath());
+          ops.mkdirs(destination.getParent().toFile());
+          Files.copy(stream, destination, StandardCopyOption.REPLACE_EXISTING);
+        }
       }
 
     } catch (IOException e) {
@@ -468,7 +520,7 @@ public class UnpackedAars {
                 FetchExecutor.EXECUTOR.submit(
                     () -> {
                       try {
-                        ops.deleteRecursively(aarDirForKey(key));
+                        ops.deleteRecursively(aarDirForKey(key), true);
                       } catch (IOException e) {
                         logger.warn(e);
                       }

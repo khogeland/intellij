@@ -1,75 +1,41 @@
-v2019.12.16
+v2021.04.07
 ===========
-* Bug fixes and internal cleanup.
+* IntelliJ: Compatible with IntelliJ CE/UE 2020.3.
+* 2020.3+ versions: Integrate Bazel-based IntelliJ projects into the new
+  IntelliJ Welcome screen.
+* Fix displaying/modifying code style settings for BUILD files.
 
-v2019.12.02
+v2021.02.02
 ===========
-* Bug fixes and internal cleanup.
+* ASwB: Fix unresolved Kotlin symbols when using Dagger/Sting
 
-v2019.11.11
+v2020.03.19
 ===========
-* Bug fixes and internal cleanup.
+* Add support for multiple targets in bazel run configurations
+* Improve BUILD file code folding support
 
-v2019.10.28
+v2020.02.24
 ===========
-* Bug fixes and internal cleanup.
-
-v2019.10.14
-===========
-* Bug fixes and internal cleanup.
+* Allow queuing sync actions while building indices.
+* Show gutter run markers next to BUILD targets.
+* BUILD files auto-complete updates.
 
 v2019.09.30
 ===========
 * CLion: fix unresolved genfiles after the first sync.
 
-v2019.09.16
-===========
-* Bug fixes and internal cleanup.
-
-v2019.09.03
-===========
-* Bug fixes and internal cleanup.
-
 v2019.08.19
 ===========
 * Add support for starlark debugging.
-
-v2019.08.05
-===========
-* Bug fixes and internal cleanup.
 
 v2019.07.22
 ===========
 * Add a .bazelproject option to automatically derive the relevant bazel
   targets from directories. This is enabled by default for new projects.
 
-v2019.07.08
-===========
-* Bug fixes and internal cleanup.
-
-v2019.06.17
-===========
-* Bug fixes and internal cleanup.
-
 v2019.06.03
 ===========
 * CLion: Fix debugging with bundled GDB
-
-v2019.05.13
-===========
-* Bug fixes and internal cleanup.
-
-v2019.04.29
-===========
-* Bug fixes and internal cleanup.
-
-v2019.04.15
-===========
-* Bug fixes and internal cleanup.
-
-v2019.04.01
-===========
-* Bug fixes and internal cleanup.
 
 v2019.03.18
 ===========

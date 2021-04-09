@@ -16,40 +16,32 @@
 package com.google.idea.blaze.android.run.testrecorder;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.idea.blaze.base.sync.data.BlazeDataStorage.WORKSPACE_MODULE_NAME;
+import static org.mockito.Mockito.mock;
 
 import com.google.gct.testrecorder.run.TestRecorderRunConfigurationProxy;
 import com.google.gct.testrecorder.ui.TestRecorderAction;
 import com.google.idea.blaze.android.AndroidIntegrationTestSetupRule;
 import com.google.idea.blaze.android.run.binary.BlazeAndroidBinaryRunConfigurationHandler;
-import com.google.idea.blaze.android.run.binary.BlazeAndroidBinaryRunConfigurationHandlerProvider;
 import com.google.idea.blaze.android.run.binary.BlazeAndroidBinaryRunConfigurationState;
 import com.google.idea.blaze.base.BlazeIntegrationTestCase;
 import com.google.idea.blaze.base.ideinfo.TargetIdeInfo;
 import com.google.idea.blaze.base.ideinfo.TargetMapBuilder;
 import com.google.idea.blaze.base.model.MockBlazeProjectDataBuilder;
 import com.google.idea.blaze.base.model.MockBlazeProjectDataManager;
-import com.google.idea.blaze.base.model.primitives.Kind;
 import com.google.idea.blaze.base.model.primitives.Label;
 import com.google.idea.blaze.base.run.BlazeCommandRunConfiguration;
 import com.google.idea.blaze.base.run.BlazeCommandRunConfigurationType;
-import com.google.idea.blaze.base.run.confighandler.BlazeCommandRunConfigurationHandler;
-import com.google.idea.blaze.base.run.confighandler.BlazeCommandRunConfigurationHandlerProvider;
-import com.google.idea.blaze.base.run.confighandler.BlazeCommandRunConfigurationHandlerProvider.TargetState;
 import com.google.idea.blaze.base.sync.data.BlazeProjectDataManager;
+import com.google.idea.blaze.base.sync.projectstructure.ModuleFinder;
 import com.google.idea.blaze.java.AndroidBlazeRules;
-import com.google.idea.sdkcompat.run.RunManagerCompat;
 import com.intellij.execution.RunManagerEx;
 import com.intellij.execution.configurations.ConfigurationType;
 import com.intellij.execution.configurations.RunConfiguration;
 import com.intellij.execution.impl.RunManagerImpl;
-import com.intellij.mock.MockModule;
-import com.intellij.openapi.extensions.ExtensionPoint;
-import com.intellij.openapi.extensions.Extensions;
-import com.intellij.openapi.extensions.LoadingOrder;
 import com.intellij.openapi.module.Module;
-import com.intellij.openapi.util.Disposer;
 import java.util.List;
-import javax.annotation.Nullable;
+import org.jdom.Element;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -66,22 +58,19 @@ public class TestRecorderBlazeCommandRunConfigurationTest extends BlazeIntegrati
       new AndroidIntegrationTestSetupRule();
 
   private RunManagerImpl runManager;
+  private Element defaultRunManagerState;
 
   @Before
   public final void doSetup() {
     runManager = RunManagerImpl.getInstanceImpl(getProject());
+    defaultRunManagerState = runManager.getState();
     // Without BlazeProjectData, the configuration editor is always disabled.
     BlazeProjectDataManager mockProjectDataManager =
         new MockBlazeProjectDataManager(MockBlazeProjectDataBuilder.builder(workspaceRoot).build());
     registerProjectService(BlazeProjectDataManager.class, mockProjectDataManager);
 
-    BlazeCommandRunConfigurationHandlerProvider mockHandler =
-        new MockBlazeAndroidBinaryRunConfigurationHandlerProvider();
-    ExtensionPoint<BlazeCommandRunConfigurationHandlerProvider> ep =
-        Extensions.getRootArea()
-            .getExtensionPoint(BlazeCommandRunConfigurationHandlerProvider.EP_NAME);
-    ep.registerExtension(mockHandler, LoadingOrder.FIRST);
-    Disposer.register(getTestRootDisposable(), () -> ep.unregisterExtension(mockHandler));
+    registerProjectService(
+        ModuleFinder.class, name -> name.equals(WORKSPACE_MODULE_NAME) ? mock(Module.class) : null);
 
     MockBlazeProjectDataBuilder builder = MockBlazeProjectDataBuilder.builder(workspaceRoot);
     builder.setTargetMap(
@@ -104,10 +93,11 @@ public class TestRecorderBlazeCommandRunConfigurationTest extends BlazeIntegrati
   @After
   public final void doTeardown() {
     runManager.clearAll();
+    runManager.loadState(defaultRunManagerState);
     // We don't need to do this at setup, because it is handled by RunManagerImpl's constructor.
     // However, clearAll() clears the configuration types, so we need to reinitialize them.
-    RunManagerCompat.initializeConfigurationTypes(
-        runManager, ConfigurationType.CONFIGURATION_TYPE_EP);
+    runManager.initializeConfigurationTypes(
+        ConfigurationType.CONFIGURATION_TYPE_EP.getExtensionList());
   }
 
   @Test
@@ -161,39 +151,5 @@ public class TestRecorderBlazeCommandRunConfigurationTest extends BlazeIntegrati
         true);
     runManager.addConfiguration(
         runManager.createConfiguration(blazeAndroidTestConfiguration, configurationFactory), true);
-  }
-
-  // Mock out the handler to return a non-null module (required by TestRecorderAction)
-  private class MockBlazeAndroidBinaryRunConfigurationHandlerProvider
-      extends BlazeAndroidBinaryRunConfigurationHandlerProvider {
-    @Override
-    public boolean canHandleKind(TargetState state, @Nullable Kind kind) {
-      return true;
-    }
-
-    @Override
-    public BlazeCommandRunConfigurationHandler createHandler(BlazeCommandRunConfiguration config) {
-      return new MockBlazeAndroidBinaryRunConfigurationHandler(config);
-    }
-  }
-
-  private class MockBlazeAndroidBinaryRunConfigurationHandler
-      extends BlazeAndroidBinaryRunConfigurationHandler {
-    private final MockModule mockModule;
-
-    MockBlazeAndroidBinaryRunConfigurationHandler(BlazeCommandRunConfiguration configuration) {
-      super(configuration);
-      mockModule = new MockModule(getProject(), () -> {});
-    }
-
-    @Nullable
-    @Override
-    public Module getModule() {
-      Label label = getLabel();
-      if (label != null && label.equals(Label.create("//label:android_binary_rule"))) {
-        return mockModule;
-      }
-      return null;
-    }
   }
 }

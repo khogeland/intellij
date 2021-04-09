@@ -48,12 +48,22 @@ class BuildResultHelperBep implements BuildResultHelper {
   }
 
   @Override
-  public ParsedBepOutput getBuildOutput() throws GetArtifactsException {
+  public ParsedBepOutput getBuildOutput(Optional<String> completedBuildId)
+      throws GetArtifactsException {
     try (InputStream inputStream = new BufferedInputStream(new FileInputStream(outputFile))) {
       return ParsedBepOutput.parseBepArtifacts(inputStream);
     } catch (IOException | BuildEventStreamException e) {
       logger.error(e);
       throw new GetArtifactsException(e.getMessage());
+    }
+  }
+
+  @Override
+  public BuildFlags getBlazeFlags(Optional<String> completedBuildId) throws GetFlagsException {
+    try (InputStream inputStream = new BufferedInputStream(new FileInputStream(outputFile))) {
+      return BuildFlags.parseBep(inputStream);
+    } catch (IOException | BuildEventStreamException e) {
+      throw new GetFlagsException(e.getMessage());
     }
   }
 

@@ -27,7 +27,7 @@ import javax.swing.Icon;
 
 /** A type for run configurations that execute Blaze commands. */
 public class BlazeCommandRunConfigurationType implements ConfigurationType {
-  
+
   private final BlazeCommandRunConfigurationFactory factory =
       new BlazeCommandRunConfigurationFactory(this);
 
@@ -35,6 +35,12 @@ public class BlazeCommandRunConfigurationType implements ConfigurationType {
   public static class BlazeCommandRunConfigurationFactory extends ConfigurationFactory {
     private BlazeCommandRunConfigurationFactory(ConfigurationType type) {
       super(type);
+    }
+
+    @Override
+    public String getId() {
+      // must be left unchanged for backwards compatibility
+      return getName();
     }
 
     @Override
@@ -48,37 +54,34 @@ public class BlazeCommandRunConfigurationType implements ConfigurationType {
     }
 
     @Override
+    // Super method uses raw BeforeRunTask. Check super method again after #api202.
+    @SuppressWarnings("rawtypes")
     public void configureBeforeRunTaskDefaults(
         Key<? extends BeforeRunTask> providerID, BeforeRunTask task) {
       task.setEnabled(providerID.equals(BlazeBeforeRunTaskProvider.ID));
     }
   }
 
-  
   public static BlazeCommandRunConfigurationType getInstance() {
     return ConfigurationTypeUtil.findConfigurationType(BlazeCommandRunConfigurationType.class);
   }
 
-  
   @Override
   public String getDisplayName() {
     return Blaze.defaultBuildSystemName() + " Command";
   }
 
-  
   @Override
   public String getConfigurationTypeDescription() {
     return String.format(
         "Configuration for launching arbitrary %s commands.", Blaze.guessBuildSystemName());
   }
 
-  
   @Override
   public Icon getIcon() {
     return BlazeIcons.Logo;
   }
 
-  
   @Override
   public String getId() {
     return "BlazeCommandRunConfigurationType";
@@ -89,7 +92,6 @@ public class BlazeCommandRunConfigurationType implements ConfigurationType {
     return new BlazeCommandRunConfigurationFactory[] {factory};
   }
 
-  
   public BlazeCommandRunConfigurationFactory getFactory() {
     return factory;
   }

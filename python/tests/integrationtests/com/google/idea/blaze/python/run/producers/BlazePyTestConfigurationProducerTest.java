@@ -26,7 +26,7 @@ import com.google.idea.blaze.base.model.MockBlazeProjectDataManager;
 import com.google.idea.blaze.base.model.primitives.TargetExpression;
 import com.google.idea.blaze.base.model.primitives.WorkspacePath;
 import com.google.idea.blaze.base.run.BlazeCommandRunConfiguration;
-import com.google.idea.blaze.base.run.producer.BlazeRunConfigurationProducerTestCase;
+import com.google.idea.blaze.base.run.producers.BlazeRunConfigurationProducerTestCase;
 import com.google.idea.blaze.base.run.producers.TestContextRunConfigurationProducer;
 import com.google.idea.blaze.base.sync.data.BlazeProjectDataManager;
 import com.intellij.execution.actions.ConfigurationContext;
@@ -51,7 +51,7 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
   }
 
   @Test
-  public void testProducedFromPyFile() {
+  public void testProducedFromPyFile() throws Throwable {
     PsiFile pyFile =
         createAndIndexFile(
             new WorkspacePath("py/test/unittest.py"),
@@ -82,15 +82,15 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//py/test:unittests"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//py/test:unittests"));
     assertThat(getTestFilterContents(config)).isNull();
     assertThat(getCommandType(config)).isEqualTo(BlazeCommandName.TEST);
     assertThat(config.getName()).isEqualTo("Blaze test unittest.py");
   }
 
   @Test
-  public void testProducedFromPyClass() {
+  public void testProducedFromPyClass() throws Throwable {
     PsiFile pyFile =
         createAndIndexFile(
             new WorkspacePath("py/test/unittest.py"),
@@ -124,15 +124,15 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//py/test:unittests"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//py/test:unittests"));
     assertThat(getTestFilterContents(config)).isEqualTo("--test_filter=UnitTest");
     assertThat(getCommandType(config)).isEqualTo(BlazeCommandName.TEST);
     assertThat(config.getName()).isEqualTo("Blaze test UnitTest (unittest.py)");
   }
 
   @Test
-  public void testProducedFromTestCase() {
+  public void testProducedFromTestCase() throws Throwable {
     PsiFile pyFile =
         createAndIndexFile(
             new WorkspacePath("py/test/unittest.py"),
@@ -166,15 +166,15 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//py/test:unittests"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//py/test:unittests"));
     assertThat(getTestFilterContents(config)).isEqualTo("--test_filter=UnitTest.testSomething");
     assertThat(getCommandType(config)).isEqualTo(BlazeCommandName.TEST);
     assertThat(config.getName()).isEqualTo("Blaze test UnitTest.testSomething (unittest.py)");
   }
 
   @Test
-  public void testProducedFromTestCaseWithParameters() {
+  public void testProducedFromTestCaseWithParameters() throws Throwable {
     PsiFile pyFile =
         createAndIndexFile(
             new WorkspacePath("py/test/unittest.py"),
@@ -209,8 +209,8 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//py/test:unittests"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//py/test:unittests"));
     assertThat(getTestFilterContents(config))
         .isEqualTo("--test_filter=\"UnitTest.testSomething0 UnitTest.testSomething1\"");
     assertThat(getCommandType(config)).isEqualTo(BlazeCommandName.TEST);
@@ -218,7 +218,7 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
   }
 
   @Test
-  public void testProducedFromTestCaseWithNamedParametersDict() {
+  public void testProducedFromTestCaseWithNamedParametersDict() throws Throwable {
     PsiFile pyFile =
         createAndIndexFile(
             new WorkspacePath("py/test/unittest.py"),
@@ -256,8 +256,8 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//py/test:unittests"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//py/test:unittests"));
     assertThat(getTestFilterContents(config))
         .isEqualTo("--test_filter=\"UnitTest.testSomething_First UnitTest.testSomething_Second\"");
     assertThat(getCommandType(config)).isEqualTo(BlazeCommandName.TEST);
@@ -265,7 +265,7 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
   }
 
   @Test
-  public void testProducedFromTestCaseWithNamedParametersTuple() {
+  public void testProducedFromTestCaseWithNamedParametersTuple() throws Throwable {
     PsiFile pyFile =
         createAndIndexFile(
             new WorkspacePath("py/test/unittest.py"),
@@ -303,8 +303,8 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//py/test:unittests"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//py/test:unittests"));
     assertThat(getTestFilterContents(config))
         .isEqualTo("--test_filter=\"UnitTest.testSomething_First UnitTest.testSomething_Second\"");
     assertThat(getCommandType(config)).isEqualTo(BlazeCommandName.TEST);
@@ -312,7 +312,7 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
   }
 
   @Test
-  public void testProducedFromTestCaseWithNamedParametersTupleAndUnderscores() {
+  public void testProducedFromTestCaseWithNamedParametersTupleAndUnderscores() throws Throwable {
     PsiFile pyFile =
         createAndIndexFile(
             new WorkspacePath("py/test/unittest.py"),
@@ -350,8 +350,8 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//py/test:unittests"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//py/test:unittests"));
     assertThat(getTestFilterContents(config))
         .isEqualTo(
             "--test_filter=\"UnitTest.test_something_First UnitTest.test_something_Second\"");
@@ -360,7 +360,7 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
   }
 
   @Test
-  public void testProducedFromTestCaseWithParametersList() {
+  public void testProducedFromTestCaseWithParametersList() throws Throwable {
     PsiFile pyFile =
         createAndIndexFile(
             new WorkspacePath("py/test/unittest.py"),
@@ -395,8 +395,8 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//py/test:unittests"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//py/test:unittests"));
     assertThat(getTestFilterContents(config))
         .isEqualTo("--test_filter=\"UnitTest.testSomething0 UnitTest.testSomething1\"");
     assertThat(getCommandType(config)).isEqualTo(BlazeCommandName.TEST);
@@ -404,7 +404,7 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
   }
 
   @Test
-  public void testProducedFromTestCaseWithNamedParametersDictList() {
+  public void testProducedFromTestCaseWithNamedParametersDictList() throws Throwable {
     PsiFile pyFile =
         createAndIndexFile(
             new WorkspacePath("py/test/unittest.py"),
@@ -442,8 +442,8 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//py/test:unittests"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//py/test:unittests"));
     assertThat(getTestFilterContents(config))
         .isEqualTo("--test_filter=\"UnitTest.testSomething_First UnitTest.testSomething_Second\"");
     assertThat(getCommandType(config)).isEqualTo(BlazeCommandName.TEST);
@@ -451,7 +451,7 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
   }
 
   @Test
-  public void testProducedFromTestCaseWithEmptyParametersList() {
+  public void testProducedFromTestCaseWithEmptyParametersList() throws Throwable {
     PsiFile pyFile =
         createAndIndexFile(
             new WorkspacePath("py/test/unittest.py"),
@@ -486,8 +486,8 @@ public class BlazePyTestConfigurationProducerTest extends BlazeRunConfigurationP
 
     BlazeCommandRunConfiguration config =
         (BlazeCommandRunConfiguration) fromContext.getConfiguration();
-    assertThat(config.getTarget())
-        .isEqualTo(TargetExpression.fromStringSafe("//py/test:unittests"));
+    assertThat(config.getTargets())
+        .containsExactly(TargetExpression.fromStringSafe("//py/test:unittests"));
     assertThat(getTestFilterContents(config)).isNull();
     assertThat(getCommandType(config)).isEqualTo(BlazeCommandName.TEST);
     assertThat(config.getName()).isEqualTo("Blaze test UnitTest.testSomething (unittest.py)");

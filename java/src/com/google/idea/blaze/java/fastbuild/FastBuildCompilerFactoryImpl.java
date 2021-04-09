@@ -42,6 +42,7 @@ import com.google.idea.blaze.java.fastbuild.FastBuildLogDataScope.FastBuildLogOu
 import com.intellij.ide.plugins.IdeaPluginDescriptor;
 import com.intellij.ide.plugins.PluginManager;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.serviceContainer.NonInjectable;
 import java.io.File;
@@ -85,9 +86,9 @@ final class FastBuildCompilerFactoryImpl implements FastBuildCompilerFactory {
     this.fastBuildJavacJarSupplier = fastBuildJavacJarSupplier;
   }
 
-  FastBuildCompilerFactoryImpl(BlazeProjectDataManager projectDataManager) {
+  FastBuildCompilerFactoryImpl(Project project) {
     this(
-        projectDataManager,
+        BlazeProjectDataManager.getInstance(project),
         EventLoggingService::getInstance,
         FastBuildCompilerFactoryImpl::findFastBuildJavacJar);
   }
@@ -170,7 +171,7 @@ final class FastBuildCompilerFactoryImpl implements FastBuildCompilerFactory {
         boolean result = output.result;
         Command command =
             Command.builder()
-                .setExecutable(javacJars.get(0).getPath())
+                .setExecutable("javac")
                 .setArguments(javacArgs)
                 .setExitCode(result ? 0 : 1)
                 .setSubcommandName("javac")
@@ -199,8 +200,17 @@ final class FastBuildCompilerFactoryImpl implements FastBuildCompilerFactory {
     for (int i = 0; i < jars.size(); ++i) {
       urls[i] = jars.get(i).toURI().toURL();
     }
-    URLClassLoader urlClassLoader = new URLClassLoader(urls, /* parent= */ null);
+    URLClassLoader urlClassLoader = new URLClassLoader(urls, platformClassLoader());
     return urlClassLoader.loadClass(javaCompilerClass);
+  }
+
+  private static ClassLoader platformClassLoader() {
+    try {
+      return (ClassLoader) ClassLoader.class.getMethod("getPlatformClassLoader").invoke(null);
+    } catch (ReflectiveOperationException e) {
+      // Java 8
+      return null;
+    }
   }
 
   private static class JavacRunner implements FastBuildCompiler {

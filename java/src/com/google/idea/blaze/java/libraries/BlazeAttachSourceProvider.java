@@ -25,15 +25,15 @@ import com.google.idea.blaze.base.sync.data.BlazeProjectDataManager;
 import com.google.idea.blaze.base.sync.libraries.LibraryEditor;
 import com.google.idea.blaze.java.sync.model.BlazeJarLibrary;
 import com.google.idea.common.experiments.BoolExperiment;
-import com.google.idea.common.transactions.Transactions;
+import com.google.idea.common.util.Transactions;
 import com.intellij.codeInsight.AttachSourcesProvider;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.TransactionGuard;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.LibraryOrderEntry;
-import com.intellij.openapi.roots.impl.libraries.ProjectLibraryTable;
 import com.intellij.openapi.roots.libraries.Library;
 import com.intellij.openapi.roots.libraries.LibraryTable;
+import com.intellij.openapi.roots.libraries.LibraryTablesRegistrar;
 import com.intellij.openapi.util.ActionCallback;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiManager;
@@ -156,7 +156,8 @@ public class BlazeAttachSourceProvider implements AttachSourcesProvider {
     ApplicationManager.getApplication()
         .runWriteAction(
             () -> {
-              LibraryTable libraryTable = ProjectLibraryTable.getInstance(project);
+              LibraryTable libraryTable =
+                  LibraryTablesRegistrar.getInstance().getLibraryTable(project);
               LibraryTable.ModifiableModel libraryTableModel = libraryTable.getModifiableModel();
               for (BlazeLibrary blazeLibrary : librariesToAttachSourceTo) {
                 // Make sure we don't do it twice

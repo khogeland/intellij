@@ -15,12 +15,10 @@
  */
 package com.google.idea.blaze.android.run.runner;
 
-import static org.jetbrains.android.actions.RunAndroidAvdManagerAction.getName;
-
 import com.android.tools.idea.run.AndroidSessionInfo;
+import com.android.tools.idea.run.DeviceCount;
 import com.android.tools.idea.run.DeviceFutures;
 import com.android.tools.idea.run.editor.DeployTarget;
-import com.android.tools.idea.run.editor.DeployTargetState;
 import com.intellij.execution.ExecutionException;
 import com.intellij.execution.Executor;
 import com.intellij.execution.runners.ExecutionEnvironment;
@@ -54,7 +52,6 @@ public interface BlazeAndroidDeviceSelector {
   DeviceSession getDevice(
       Project project,
       AndroidFacet facet,
-      BlazeAndroidRunConfigurationDeployTargetManager deployTargetManager,
       Executor executor,
       ExecutionEnvironment env,
       AndroidSessionInfo info,
@@ -102,7 +99,6 @@ public interface BlazeAndroidDeviceSelector {
     public DeviceSession getDevice(
         Project project,
         AndroidFacet facet,
-        BlazeAndroidRunConfigurationDeployTargetManager deployTargetManager,
         Executor executor,
         ExecutionEnvironment env,
         AndroidSessionInfo info,
@@ -117,18 +113,16 @@ public interface BlazeAndroidDeviceSelector {
         }
       }
 
-      DeployTarget deployTarget =
-          deployTargetManager.getDeployTarget(executor, env, facet, runConfigId);
+      DeployTarget deployTarget = BlazeDeployTargetService.getInstance(project).getDeployTarget();
       if (deployTarget == null) {
         return null;
       }
 
       DeviceFutures deviceFutures = null;
-      DeployTargetState deployTargetState = deployTargetManager.getCurrentDeployTargetState();
       if (!deployTarget.hasCustomRunProfileState(executor)) {
         deviceFutures =
-            deployTarget.getDevices(
-                deployTargetState, facet, deployTargetManager.getDeviceCount(), debug, runConfigId);
+            DeployTargetCompat.getDevices(
+                deployTarget, facet, DeviceCount.SINGLE, debug, runConfigId);
       }
       return new DeviceSession(deployTarget, deviceFutures, info);
     }
@@ -155,8 +149,9 @@ public interface BlazeAndroidDeviceSelector {
           noText = "Cancel " + currentExecutor;
         }
 
-        String title = "Launching " + getName();
-        String yesText = "Restart " + getName();
+        String targetName = info.getExecutionTarget().getDisplayName();
+        String title = "Launching " + targetName;
+        String yesText = "Restart " + targetName;
         if (Messages.NO
             == Messages.showYesNoDialog(
                 project,

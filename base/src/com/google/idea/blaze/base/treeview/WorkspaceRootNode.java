@@ -54,7 +54,7 @@ public class WorkspaceRootNode extends PsiDirectoryNode {
   }
 
   @Override
-  public Collection<AbstractTreeNode> getChildrenImpl() {
+  public Collection<AbstractTreeNode<?>> getChildrenImpl() {
     if (!BlazeUserSettings.getInstance().getCollapseProjectView()) {
       return getWrappedChildren();
     }
@@ -62,7 +62,7 @@ public class WorkspaceRootNode extends PsiDirectoryNode {
     if (project == null) {
       return getWrappedChildren();
     }
-    List<AbstractTreeNode> children = Lists.newArrayList();
+    List<AbstractTreeNode<?>> children = Lists.newArrayList();
     ProjectViewSet projectViewSet = ProjectViewManager.getInstance(project).getProjectViewSet();
     if (projectViewSet == null) {
       return getWrappedChildren();
@@ -93,7 +93,7 @@ public class WorkspaceRootNode extends PsiDirectoryNode {
     return children;
   }
 
-  private Collection<AbstractTreeNode> getWrappedChildren() {
+  private Collection<AbstractTreeNode<?>> getWrappedChildren() {
     return BlazePsiDirectoryNode.wrapChildren(super.getChildrenImpl());
   }
 

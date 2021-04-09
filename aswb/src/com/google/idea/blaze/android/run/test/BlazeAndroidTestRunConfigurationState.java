@@ -16,7 +16,9 @@
 package com.google.idea.blaze.android.run.test;
 
 import com.android.tools.idea.run.ValidationError;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Maps;
 import com.google.idea.blaze.android.run.BlazeAndroidRunConfigurationCommonState;
 import com.google.idea.blaze.android.run.test.BlazeAndroidTestLaunchMethodsProvider.AndroidTestLaunchMethod;
@@ -25,11 +27,8 @@ import com.google.idea.blaze.base.run.state.RunConfigurationStateEditor;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.InvalidDataException;
 import com.intellij.openapi.util.WriteExternalException;
-import java.util.List;
 import java.util.Map;
-import javax.annotation.Nullable;
 import org.jdom.Element;
-import org.jetbrains.android.facet.AndroidFacet;
 import org.jetbrains.annotations.Contract;
 
 /** State specific for the android test configuration. */
@@ -67,7 +66,7 @@ public final class BlazeAndroidTestRunConfigurationState implements RunConfigura
   private final BlazeAndroidRunConfigurationCommonState commonState;
 
   public BlazeAndroidTestRunConfigurationState(String buildSystemName) {
-    commonState = new BlazeAndroidRunConfigurationCommonState(buildSystemName, true);
+    commonState = new BlazeAndroidRunConfigurationCommonState(buildSystemName);
   }
 
   public BlazeAndroidRunConfigurationCommonState getCommonState() {
@@ -79,7 +78,8 @@ public final class BlazeAndroidTestRunConfigurationState implements RunConfigura
     return launchMethod;
   }
 
-  void setLaunchMethod(AndroidTestLaunchMethod launchMethod) {
+  @VisibleForTesting
+  public void setLaunchMethod(AndroidTestLaunchMethod launchMethod) {
     this.launchMethod = launchMethod;
   }
 
@@ -135,8 +135,16 @@ public final class BlazeAndroidTestRunConfigurationState implements RunConfigura
    * We collect errors rather than throwing to avoid missing fatal errors by exiting early for a
    * warning.
    */
-  public List<ValidationError> validate(@Nullable AndroidFacet facet) {
-    return commonState.validate(facet);
+  public ImmutableList<ValidationError> validate(Project project) {
+    ImmutableList.Builder<ValidationError> errors = ImmutableList.builder();
+    errors.addAll(commonState.validate(project));
+    if (commonState.isNativeDebuggingEnabled()
+        && !launchMethod.equals(AndroidTestLaunchMethod.NON_BLAZE)) {
+      errors.add(
+          ValidationError.fatal(
+              "Native debugging is not support when running with blaze test or mobile-install."));
+    }
+    return errors.build();
   }
 
   @Override

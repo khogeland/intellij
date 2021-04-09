@@ -59,9 +59,10 @@ import com.google.idea.blaze.base.sync.aspects.BuildResult.Status;
 import com.google.idea.blaze.java.AndroidBlazeRules;
 import com.google.idea.blaze.java.JavaBlazeRules;
 import com.google.idea.blaze.java.fastbuild.FastBuildChangedFilesService.ChangedSources;
+import com.google.idea.blaze.java.fastbuild.FastBuildException.BlazeBuildError;
 import com.google.idea.blaze.java.fastbuild.FastBuildLogDataScope.FastBuildLogOutput;
 import com.google.idea.blaze.java.fastbuild.FastBuildState.BuildOutput;
-import com.google.idea.common.concurrency.ConcurrencyUtil;
+import com.google.idea.common.util.ConcurrencyUtil;
 import com.intellij.openapi.components.ProjectComponent;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.io.FileUtil;
@@ -97,15 +98,11 @@ final class FastBuildServiceImpl implements FastBuildService, ProjectComponent {
 
   private final ConcurrentHashMap<Label, FastBuildState> builds;
 
-  FastBuildServiceImpl(
-      Project project,
-      ProjectViewManager projectViewManager,
-      FastBuildIncrementalCompiler incrementalCompiler,
-      FastBuildChangedFilesService changedFilesManager) {
+  FastBuildServiceImpl(Project project) {
     this.project = project;
-    this.projectViewManager = projectViewManager;
-    this.incrementalCompiler = incrementalCompiler;
-    this.changedFilesManager = changedFilesManager;
+    this.projectViewManager = ProjectViewManager.getInstance(project);
+    this.incrementalCompiler = FastBuildIncrementalCompiler.getInstance(project);
+    this.changedFilesManager = FastBuildChangedFilesService.getInstance(project);
     this.builds = new ConcurrentHashMap<>();
     this.shutdownHook = new Thread(this::resetBuilds);
   }
@@ -285,7 +282,7 @@ final class FastBuildServiceImpl implements FastBuildService, ProjectComponent {
             .addBlazeFlags(buildParameters.buildFlags())
             .addBlazeFlags(resultHelper.getBuildFlags());
 
-    aspectStrategy.addAspectAndOutputGroups(command, /* additionalOutputGroups= */ "default");
+    aspectStrategy.addAspectAndOutputGroups(command, /* additionalOutputGroups...= */ "default");
 
     int exitCode =
         ExternalTask.builder(WorkspaceRoot.fromProject(project))
@@ -301,7 +298,7 @@ final class FastBuildServiceImpl implements FastBuildService, ProjectComponent {
         FastBuildLogOutput.keyValue("deploy_jar_build_result", result.status.toString()));
     context.output(FastBuildLogOutput.milliseconds("deploy_jar_build_time_ms", timer));
     if (result.status != Status.SUCCESS) {
-      throw new RuntimeException("Blaze failure building deploy jar");
+      throw new FastBuildTunnelException(new BlazeBuildError("Blaze failure building deploy jar"));
     }
     Predicate<String> filePredicate =
         file ->

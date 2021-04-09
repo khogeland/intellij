@@ -2,82 +2,107 @@
 
 # The current indirect ij_product mapping (eg. "intellij-latest")
 INDIRECT_IJ_PRODUCTS = {
-    "intellij-latest": "intellij-2019.2",
-    "intellij-latest-mac": "intellij-2019.2-mac",
-    "intellij-beta": "intellij-2019.2",
-    "intellij-canary": "intellij-2019.3",
-    "intellij-ue-latest": "intellij-ue-2019.2",
-    "intellij-ue-latest-mac": "intellij-ue-2019.2-mac",
-    "intellij-ue-beta": "intellij-ue-2019.2",
-    "intellij-ue-canary": "intellij-ue-2019.3",
-    "android-studio-latest": "android-studio-3.5",
-    "android-studio-beta": "android-studio-3.6",
-    "android-studio-beta-mac": "android-studio-3.6-mac",
-    "android-studio-canary": "android-studio-4.0",
-    "clion-latest": "clion-2019.2",
-    "clion-beta": "clion-2019.2",
+    "intellij-latest": "intellij-2020.2",
+    "intellij-latest-mac": "intellij-2020.2-mac",
+    "intellij-beta": "intellij-2020.3",
+    "intellij-canary": "intellij-2020.3",
+    "intellij-ue-latest": "intellij-ue-2020.2",
+    "intellij-ue-latest-mac": "intellij-ue-2020.2-mac",
+    "intellij-ue-beta": "intellij-ue-2020.3",
+    "intellij-ue-canary": "intellij-ue-2020.3",
+    "android-studio-latest": "android-studio-4.2",
+    "android-studio-beta": "android-studio-4.2",
+    "android-studio-beta-mac": "android-studio-4.2-mac",
+    "android-studio-canary": "android-studio-2020.3",
+    "clion-latest": "clion-2020.2",
+    "clion-latest-mac": "clion-2020.2-mac",
+    "clion-beta": "clion-2020.3",
 }
 
 DIRECT_IJ_PRODUCTS = {
-    "intellij-2019.2": struct(
+    "intellij-2020.1": struct(
         ide = "intellij",
-        directory = "intellij_ce_2019_2",
+        directory = "intellij_ce_2020_1",
     ),
-    "intellij-2019.2-mac": struct(
+    "intellij-2020.1-mac": struct(
         ide = "intellij",
-        directory = "intellij_ce_2019_2",
+        directory = "intellij_ce_2020_1",
     ),
-    "intellij-ue-2019.2": struct(
-        ide = "intellij-ue",
-        directory = "intellij_ue_2019_2",
-    ),
-    "intellij-ue-2019.2-mac": struct(
-        ide = "intellij-ue",
-        directory = "intellij_ue_2019_2",
-    ),
-    "intellij-2019.3": struct(
+    "intellij-2020.2": struct(
         ide = "intellij",
-        directory = "intellij_ce_2019_3",
+        directory = "intellij_ce_2020_2",
     ),
-    "intellij-2019.3-mac": struct(
+    "intellij-2020.2-mac": struct(
         ide = "intellij",
-        directory = "intellij_ce_2019_3",
+        directory = "intellij_ce_2020_2",
     ),
-    "intellij-ue-2019.3": struct(
+    "intellij-2020.3": struct(
+        ide = "intellij",
+        directory = "intellij_ce_2020_3",
+    ),
+    "intellij-2020.3-mac": struct(
+        ide = "intellij",
+        directory = "intellij_ce_2020_3",
+    ),
+    "intellij-ue-2020.1": struct(
         ide = "intellij-ue",
-        directory = "intellij_ue_2019_3",
+        directory = "intellij_ue_2020_1",
     ),
-    "intellij-ue-2019.3-mac": struct(
+    "intellij-ue-2020.1-mac": struct(
         ide = "intellij-ue",
-        directory = "intellij_ue_2019_3",
+        directory = "intellij_ue_2020_1",
     ),
-    "android-studio-3.5": struct(
+    "intellij-ue-2020.2": struct(
+        ide = "intellij-ue",
+        directory = "intellij_ue_2020_2",
+    ),
+    "intellij-ue-2020.2-mac": struct(
+        ide = "intellij-ue",
+        directory = "intellij_ue_2020_2",
+    ),
+    "intellij-ue-2020.3": struct(
+        ide = "intellij-ue",
+        directory = "intellij_ue_2020_3",
+    ),
+    "intellij-ue-2020.3-mac": struct(
+        ide = "intellij-ue",
+        directory = "intellij_ue_2020_3",
+    ),
+    "android-studio-4.2": struct(
         ide = "android-studio",
-        directory = "android_studio_3_5",
+        directory = "android_studio_4_2",
     ),
-    "android-studio-3.5-mac": struct(
+    "android-studio-4.2-mac": struct(
         ide = "android-studio",
-        directory = "android_studio_3_5",
+        directory = "android_studio_4_2",
     ),
-    "android-studio-3.6": struct(
+    "android-studio-2020.3": struct(
         ide = "android-studio",
-        directory = "android_studio_3_6",
+        directory = "android_studio_2020_3",
     ),
-    "android-studio-3.6-mac": struct(
-        ide = "android-studio",
-        directory = "android_studio_3_6",
-    ),
-    "android-studio-4.0": struct(
-        ide = "android-studio",
-        directory = "android_studio_4_0",
-    ),
-    "clion-2019.2": struct(
+    "clion-2020.1": struct(
         ide = "clion",
-        directory = "clion_2019_2",
+        directory = "clion_2020_1",
     ),
-    "clion-2019.3": struct(
+    "clion-2020.1-mac": struct(
         ide = "clion",
-        directory = "clion_2019_3",
+        directory = "clion_2020_1",
+    ),
+    "clion-2020.2": struct(
+        ide = "clion",
+        directory = "clion_2020_2",
+    ),
+    "clion-2020.2-mac": struct(
+        ide = "clion",
+        directory = "clion_2020_2",
+    ),
+    "clion-2020.3": struct(
+        ide = "clion",
+        directory = "clion_2020_3",
+    ),
+    "clion-2020.3-mac": struct(
+        ide = "clion",
+        directory = "clion_2020_3",
     ),
 }
 
@@ -209,3 +234,34 @@ def select_from_plugin_api_directory(intellij, android_studio, clion, intellij_u
     params["default"] = params[INDIRECT_IJ_PRODUCTS["intellij-latest"]]
 
     return select_for_plugin_api(params)
+
+def no_mockito_extensions(name, jars, **kwargs):
+    """Removes mockito extensions from jars.
+
+    Args:
+        name: Name of the resulting java_import target.
+        jars: List of jars from which to remove mockito extensions.
+        **kwargs: Arbitrary attributes for the java_import target.
+    """
+
+    output_jars = []
+    for input_jar in jars:
+        output_jar_name = name + "_" + input_jar.replace("/", "_")
+        output_jar = name + "/" + input_jar
+        native.genrule(
+            name = output_jar_name,
+            srcs = [input_jar],
+            outs = [output_jar],
+            cmd = """
+            cp "$<" "$@"
+            chmod u+w "$@"
+            zip -d "$@" mockito-extensions/*
+            """,
+        )
+        output_jars.append(output_jar_name)
+
+    native.java_import(
+        name = name,
+        jars = output_jars,
+        **kwargs
+    )
