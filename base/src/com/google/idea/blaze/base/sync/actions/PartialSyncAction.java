@@ -55,7 +55,7 @@ public class PartialSyncAction extends BlazeProjectSyncAction {
         String description,
         ImmutableSet<TargetExpression> targets,
         ImmutableSet<WorkspacePath> sources) {
-      this.description = description;
+      this.description = description.replace("\\", "/");
       this.targets = targets;
       this.sources = sources;
     }
